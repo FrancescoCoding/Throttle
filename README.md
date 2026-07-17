@@ -37,6 +37,15 @@ need its own kernel driver.
 
 _(Coming soon.)_
 
+## Download
+
+Prebuilt Windows binaries are available on the
+[Releases page](https://github.com/FrancescoCoding/Throttle/releases).
+Grab the latest `Throttle-vX.Y.Z-windows-x64.zip`, extract it anywhere, and run
+`throttle.exe`. The WinDivert driver files are included in the zip, so no extra
+setup is needed. Windows will show a UAC prompt because the app needs
+administrator rights (see below).
+
 ## Building
 
 You need a recent stable Rust toolchain (2024 edition) and the WinDivert files
