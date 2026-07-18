@@ -1,10 +1,12 @@
 # Throttle
+[![release](https://img.shields.io/github/v/release/FrancescoCoding/Throttle)](https://github.com/FrancescoCoding/Throttle/releases)
+![platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078D6)
+![rust](https://img.shields.io/badge/built%20with-Rust-orange)
+[![license](https://img.shields.io/github/license/FrancescoCoding/Throttle)](LICENSE)
 
 A free, open-source **NetLimiter-style bandwidth monitor and limiter for Windows**,
 written in Rust. It shows live per-process download/upload rates and lets you cap
 or block any process's network traffic, with no license nags and no telemetry.
-
-![status: work in progress](https://img.shields.io/badge/status-WIP-orange)
 
 ## What it is
 
@@ -23,6 +25,8 @@ Traffic interception uses [WinDivert](https://reqrypt.org/windivert.html), a
 signed, well-established user-mode packet-diversion driver, so Throttle does not
 need its own kernel driver.
 
+https://github.com/user-attachments/assets/632312e7-4096-4957-b2f7-f2277aa96bb3
+
 ## Features
 
 - Native GUI (egui/eframe): sortable process table, total-traffic graph, and a
@@ -35,7 +39,9 @@ need its own kernel driver.
 
 ## Screenshots
 
-_(Coming soon.)_
+<img width="818" height="452" alt="Throttle demo" src="https://github.com/user-attachments/assets/eeeb9d21-e78f-4832-ae14-7dddc8e905c7" />
+
+<img width="818" height="452" alt="Throttle download limit" src="https://github.com/user-attachments/assets/8b2238fb-3dc5-4fba-bf9e-c32c1ff3367e" />
 
 ## Download
 
