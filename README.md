@@ -2,7 +2,6 @@
 [![release](https://img.shields.io/github/v/release/FrancescoCoding/Throttle)](https://github.com/FrancescoCoding/Throttle/releases)
 ![platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078D6)
 ![rust](https://img.shields.io/badge/built%20with-Rust-orange)
-[![license](https://img.shields.io/github/license/FrancescoCoding/Throttle)](LICENSE)
 
 A free, open-source **NetLimiter-style bandwidth monitor and limiter for Windows**,
 written in Rust. It shows live per-process download/upload rates and lets you cap
