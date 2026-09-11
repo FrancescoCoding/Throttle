@@ -11,11 +11,21 @@ pub const UNKNOWN_EXE: &str = "<unknown>";
 /// Pseudo executable path used for kernel-owned flows (PID 4).
 pub const SYSTEM_EXE: &str = "system";
 
-/// Whether shaping rules may be applied to this executable key. The synthetic
-/// "Unknown" and kernel "System" rows are never shaped implicitly: limiting
-/// them would throttle traffic we cannot even identify.
+/// Whether shaping rules may be applied to this executable key.
+///
+/// Only the "Unknown" row is exempt: it is not a process but the shifting mix
+/// of traffic we failed to identify, so a limit on it would be meaningless.
+/// The kernel "System" row is a real, stable source (SMB, VPN tunnels, Windows
+/// Update delivery) and may be shaped like any process; the GUI warns about
+/// what it covers.
 pub fn is_shapable(exe: &str) -> bool {
-    exe != UNKNOWN_EXE && exe != SYSTEM_EXE
+    exe != UNKNOWN_EXE
+}
+
+/// Whether this key is the kernel "System" row, which the GUI annotates with a
+/// warning before offering shaping actions.
+pub fn is_system(exe: &str) -> bool {
+    exe == SYSTEM_EXE
 }
 
 /// Display name for an executable key, special-casing the synthetic rows.
@@ -40,9 +50,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn synthetic_rows_are_not_shapable() {
+    fn only_the_unknown_row_is_unshapable() {
         assert!(!is_shapable(UNKNOWN_EXE));
-        assert!(!is_shapable(SYSTEM_EXE));
+        assert!(is_shapable(SYSTEM_EXE));
+        assert!(is_system(SYSTEM_EXE));
+        assert!(!is_system(UNKNOWN_EXE));
         assert!(is_shapable("c:\\app\\thing.exe"));
     }
 

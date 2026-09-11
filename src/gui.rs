@@ -10,11 +10,18 @@ use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
 use egui_plot::{Legend, Line, Plot, PlotPoints};
 
-use crate::backend::synthetic::is_shapable;
+use crate::backend::rules;
+use crate::backend::synthetic::{is_shapable, is_system};
 use crate::types::{Command, ProcessStats, Rule, Snapshot};
 
 /// How many total-rate samples we keep for the header graph.
 const TOTAL_HISTORY_LEN: usize = 120;
+
+/// Project links used by the Help menu and the About dialog.
+const REPO_URL: &str = env!("CARGO_PKG_REPOSITORY");
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Version of the bundled WinDivert driver (see `vendor/`).
+const WINDIVERT_VERSION: &str = "2.2.2";
 
 const COLOR_DOWN: egui::Color32 = egui::Color32::from_rgb(0x4c, 0xaf, 0x50);
 const COLOR_UP: egui::Color32 = egui::Color32::from_rgb(0x21, 0x96, 0xf3);
@@ -174,6 +181,7 @@ pub struct ThrottleApp {
     selected: Option<String>,
 
     limit_modal: Option<LimitModal>,
+    about_open: bool,
     shutdown_sent: bool,
 }
 
@@ -193,6 +201,7 @@ impl ThrottleApp {
             sort_desc: true,
             selected: None,
             limit_modal: None,
+            about_open: false,
             shutdown_sent: false,
         }
     }
@@ -264,6 +273,110 @@ impl ThrottleApp {
                 self.sort_desc = true;
             }
         }
+    }
+
+    fn draw_menu_bar(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::top("menu_bar").show(ui, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
+                ui.menu_button("File", |ui| {
+                    if ui.button("Open rules file").clicked() {
+                        open_path(&rules::rules_path());
+                        ui.close();
+                    }
+                    if ui.button("Open log file").clicked() {
+                        open_path(&rules::config_dir().join("throttle.log"));
+                        ui.close();
+                    }
+                    if ui.button("Open data folder").clicked() {
+                        open_path(&rules::config_dir());
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("Exit").clicked() {
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        ui.close();
+                    }
+                });
+                ui.menu_button("Help", |ui| {
+                    if ui.button("Documentation").clicked() {
+                        open_url(ui.ctx(), &format!("{REPO_URL}#readme"));
+                        ui.close();
+                    }
+                    if ui.button("Report issue").clicked() {
+                        open_url(ui.ctx(), &format!("{REPO_URL}/issues/new"));
+                        ui.close();
+                    }
+                    if ui.button("Check for updates…").clicked() {
+                        open_url(ui.ctx(), &format!("{REPO_URL}/releases/latest"));
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("View license").clicked() {
+                        open_url(ui.ctx(), &format!("{REPO_URL}/blob/main/LICENSE"));
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("About Throttle").clicked() {
+                        self.about_open = true;
+                        ui.close();
+                    }
+                });
+            });
+        });
+    }
+
+    fn draw_about(&mut self, ctx: &egui::Context) {
+        if !self.about_open {
+            return;
+        }
+        let mut open = true;
+        egui::Window::new("About Throttle")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(6.0);
+                    ui.heading("Throttle");
+                    ui.label(egui::RichText::new(format!("Version {APP_VERSION}")).strong());
+                    ui.add_space(4.0);
+                    ui.label(env!("CARGO_PKG_DESCRIPTION"));
+                    ui.add_space(8.0);
+                });
+                ui.separator();
+                egui::Grid::new("about_grid").num_columns(2).show(ui, |ui| {
+                    ui.label("Packet driver");
+                    ui.label(format!("WinDivert {WINDIVERT_VERSION}"));
+                    ui.end_row();
+                    ui.label("UI toolkit");
+                    ui.label("egui / eframe");
+                    ui.end_row();
+                    ui.label("License");
+                    ui.label(env!("CARGO_PKG_LICENSE"));
+                    ui.end_row();
+                    ui.label("Data folder");
+                    ui.label(
+                        egui::RichText::new(rules::config_dir().display().to_string())
+                            .weak()
+                            .small(),
+                    );
+                    ui.end_row();
+                });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.hyperlink_to("GitHub", REPO_URL);
+                    ui.hyperlink_to("Releases", format!("{REPO_URL}/releases"));
+                    ui.hyperlink_to("Report issue", format!("{REPO_URL}/issues"));
+                });
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new("Copyright © 2026 Francesco Gruosso")
+                        .weak()
+                        .small(),
+                );
+            });
+        self.about_open = open;
     }
 
     fn draw_top_panel(&mut self, ui: &mut egui::Ui, snap: &Snapshot) {
@@ -519,15 +632,26 @@ impl ThrottleApp {
 
     fn row_context_menu(&mut self, resp: &egui::Response, key: &str, name: &str) {
         resp.context_menu(|ui| {
-            // The synthetic "Unknown" / "System" rows aggregate traffic we
-            // cannot safely shape, so they get no rule actions.
+            // The "Unknown" row is not a process but the traffic we failed to
+            // attribute, so it gets no rule actions.
             if !is_shapable(key) {
                 ui.label(
-                    egui::RichText::new("This row cannot be limited")
+                    egui::RichText::new("Unattributed traffic cannot be limited")
                         .weak()
                         .italics(),
                 );
                 return;
+            }
+            // System is shapable, but covers more than people expect.
+            if is_system(key) {
+                ui.label(
+                    egui::RichText::new(
+                        "Kernel traffic: includes VPN tunnels, network shares and Windows Update",
+                    )
+                    .weak()
+                    .small(),
+                );
+                ui.separator();
             }
             if ui.button("Set download limit…").clicked() {
                 self.open_limit_modal(key, name, Direction::Down);
@@ -683,10 +807,12 @@ impl eframe::App for ThrottleApp {
             }
         }
 
+        self.draw_menu_bar(ui);
         self.draw_top_panel(ui, &snap);
         self.draw_detail_panel(ui, &snap);
         self.draw_table(ui, &snap);
         self.draw_limit_modal(&ctx);
+        self.draw_about(&ctx);
 
         ctx.request_repaint_after(Duration::from_millis(500));
     }
@@ -695,6 +821,23 @@ impl eframe::App for ThrottleApp {
 impl Drop for ThrottleApp {
     fn drop(&mut self) {
         self.send_shutdown();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shell helpers
+// ---------------------------------------------------------------------------
+
+/// Open a URL in the default browser.
+fn open_url(ctx: &egui::Context, url: &str) {
+    ctx.open_url(egui::OpenUrl::new_tab(url));
+}
+
+/// Open a file with its default application, or a folder in Explorer.
+/// Best-effort: failures are logged, never surfaced as errors.
+fn open_path(path: &std::path::Path) {
+    if let Err(e) = std::process::Command::new("explorer").arg(path).spawn() {
+        tracing::warn!("failed to open {}: {e}", path.display());
     }
 }
 

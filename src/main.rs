@@ -10,6 +10,7 @@
 mod backend;
 mod gui;
 mod icon;
+mod single_instance;
 mod types;
 
 use crossbeam_channel::unbounded;
@@ -17,6 +18,27 @@ use crossbeam_channel::unbounded;
 use types::Command;
 
 fn main() -> eframe::Result {
+    // Tooling: write the .ico asset (consumed by build.rs for the exe icon).
+    // Runs before everything else: it needs neither the driver nor the lock.
+    if std::env::args().any(|a| a == "--gen-icon") {
+        let out = std::path::Path::new("assets/throttle.ico");
+        if let Some(dir) = out.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        std::fs::write(out, icon::ico_bytes()).expect("write ico");
+        println!("wrote {}", out.display());
+        return Ok(());
+    }
+
+    // Refuse to run twice: a second WinDivert shaper would double-capture
+    // every packet and undermine the first one's limits. This runs before the
+    // log file is opened, because opening it truncates the running instance's
+    // log. The lock is held until the process exits.
+    let _instance_lock = match single_instance::acquire() {
+        Some(lock) => lock,
+        None => return Ok(()),
+    };
+
     // Log to %APPDATA%\Throttle\throttle.log. The release binary has no
     // console, so a file is the only way to diagnose the driver/engine.
     let log_dir = std::env::var("APPDATA")
@@ -39,17 +61,6 @@ fn main() -> eframe::Result {
         let thread = std::thread::current().name().unwrap_or("?").to_string();
         tracing::error!("PANIC in thread '{thread}': {info}");
     }));
-
-    // Tooling: write the .ico asset (consumed by build.rs for the exe icon).
-    if std::env::args().any(|a| a == "--gen-icon") {
-        let out = std::path::Path::new("assets/throttle.ico");
-        if let Some(dir) = out.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        std::fs::write(out, icon::ico_bytes()).expect("write ico");
-        println!("wrote {}", out.display());
-        return Ok(());
-    }
 
     // GUI -> backend commands.
     let (cmd_tx, cmd_rx) = unbounded::<Command>();

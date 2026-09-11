@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use crate::types::Rule;
 
 /// Directory that holds our persisted state: `%APPDATA%\Throttle`.
-fn config_dir() -> PathBuf {
+pub fn config_dir() -> PathBuf {
     // APPDATA is always set for interactive users on Windows. If it is somehow
     // absent (unusual service contexts), fall back to the current directory so
     // we still have somewhere to write.
