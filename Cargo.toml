@@ -2,6 +2,9 @@
 name = "throttle"
 version = "0.1.1"
 edition = "2024"
+description = "A free, open-source per-process bandwidth monitor and limiter for Windows"
+repository = "https://github.com/FrancescoCoding/Throttle"
+license = "MIT"
 
 [dependencies]
 anyhow = "1.0.103"
