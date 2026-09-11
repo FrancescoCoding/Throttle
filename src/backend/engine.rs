@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 use windivert::prelude::*;
 use windivert_sys::ChecksumFlags;
 
+use super::flows;
 use super::Shared;
 
 /// Receive buffer size. WinDivert never hands us anything larger than a single
@@ -35,6 +36,8 @@ const DRAIN_INTERVAL: Duration = Duration::from_millis(5);
 /// dropped, which for TCP just applies additional back-pressure.
 const MAX_QUEUE_PKTS: usize = 256;
 const MAX_QUEUE_BYTES: usize = 1024 * 1024;
+/// How many distinct unattributed 5-tuples to log per 5s report.
+const UNATTRIBUTED_SAMPLES: usize = 5;
 
 /// The single network-layer WinDivert handle, shared by the engine (recv+send)
 /// and drainer (send) threads.
@@ -194,6 +197,9 @@ pub fn run_engine(shared: Arc<Shared>, handle: Arc<EngineHandle>) {
                 stats.recv_ok, stats.recv_err, stats.sent, stats.send_err,
                 stats.calc_err, stats.unattributed, stats.queued, stats.dropped
             );
+            for sample in &stats.unattributed_samples {
+                tracing::info!("engine 5s: unattributed sample {sample}");
+            }
             stats = EngineStats::default();
             last_report = Instant::now();
         }
@@ -212,6 +218,9 @@ struct EngineStats {
     unattributed: u64,
     queued: u64,
     dropped: u64,
+    /// Up to `UNATTRIBUTED_SAMPLES` example 5-tuples we failed to attribute,
+    /// logged with the 5s report so misattribution can be diagnosed.
+    unattributed_samples: Vec<String>,
 }
 
 /// Classify one captured packet and apply a shaping verdict.
@@ -225,7 +234,8 @@ fn handle_packet(
     let len = packet.data.len() as u64;
 
     // Attribute the packet to a process via the flow table.
-    let exe = match parse_packet(&packet.data) {
+    let parsed = parse_packet(&packet.data);
+    let exe = match parsed {
         Some((proto, src, dst)) => {
             let (local, remote) = if outbound { (src, dst) } else { (dst, src) };
             shared
@@ -237,14 +247,27 @@ fn handle_packet(
         None => None,
     };
 
-    // Look up the rule (cloned so we don't hold the rules lock).
-    let rule = exe
-        .as_ref()
-        .and_then(|e| shared.rules.lock().unwrap().get(e).cloned());
-
     if exe.is_none() {
         stats.unattributed += 1;
+        if stats.unattributed_samples.len() < UNATTRIBUTED_SAMPLES {
+            let desc = match parsed {
+                Some((proto, src, dst)) => {
+                    format!("proto={proto} src={src} dst={dst} outbound={outbound} len={len}")
+                }
+                None => format!("unparsed len={len} outbound={outbound}"),
+            };
+            if !stats.unattributed_samples.contains(&desc) {
+                stats.unattributed_samples.push(desc);
+            }
+        }
     }
+
+    // Look up the rule (cloned so we don't hold the rules lock). Synthetic rows
+    // ("Unknown", kernel "System") are never shaped: see `flows::is_shapable`.
+    let rule = exe
+        .as_ref()
+        .filter(|e| flows::is_shapable(e))
+        .and_then(|e| shared.rules.lock().unwrap().get(e).cloned());
 
     match rule {
         // No process match, or no rule: pass through untouched.
@@ -313,9 +336,13 @@ fn send_and_count(
         return;
     }
     stats.sent += 1;
-    if let Some(exe) = exe {
-        let (down, up) = if outbound { (0, len) } else { (len, 0) };
-        shared.flows.lock().unwrap().add_bytes(exe, down, up);
+    let (down, up) = if outbound { (0, len) } else { (len, 0) };
+    let mut flows = shared.flows.lock().unwrap();
+    match exe {
+        Some(exe) => flows.add_bytes(exe, down, up),
+        // Unattributed traffic still counts, under the "Unknown" row, so the
+        // totals and the graph reflect actual link usage.
+        None => flows.add_unattributed(down, up),
     }
 }
 

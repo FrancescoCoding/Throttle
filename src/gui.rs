@@ -10,6 +10,7 @@ use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
 use egui_plot::{Legend, Line, Plot, PlotPoints};
 
+use crate::backend::flows::is_shapable;
 use crate::types::{Command, ProcessStats, Rule, Snapshot};
 
 /// How many total-rate samples we keep for the header graph.
@@ -518,6 +519,16 @@ impl ThrottleApp {
 
     fn row_context_menu(&mut self, resp: &egui::Response, key: &str, name: &str) {
         resp.context_menu(|ui| {
+            // The synthetic "Unknown" / "System" rows aggregate traffic we
+            // cannot safely shape, so they get no rule actions.
+            if !is_shapable(key) {
+                ui.label(
+                    egui::RichText::new("This row cannot be limited")
+                        .weak()
+                        .italics(),
+                );
+                return;
+            }
             if ui.button("Set download limit…").clicked() {
                 self.open_limit_modal(key, name, Direction::Down);
                 ui.close();

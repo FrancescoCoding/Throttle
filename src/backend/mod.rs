@@ -125,6 +125,12 @@ where
         .with_context(|| format!("failed to spawn thread {name}"))
 }
 
+/// How many flow events to log per protocol at startup (diagnostics).
+const FLOW_EVENT_LOG_LIMIT: u32 = 10;
+/// How often the aggregator re-reads the kernel socket tables so late-created
+/// sockets (especially wildcard UDP/QUIC) get attributed.
+const TABLE_REFRESH: Duration = Duration::from_secs(2);
+
 /// Flow-event thread: bootstrap existing connections, then track flow
 /// establishment/teardown to keep the 5-tuple to process map current.
 fn run_flow_events(shared: Arc<Shared>) {
@@ -139,6 +145,10 @@ fn run_flow_events(shared: Arc<Shared>) {
         }
     };
     tracing::info!("flow-events thread started");
+
+    // Diagnostics: log the first few events of each protocol so a protocol
+    // whose 5-tuples never match captured packets is visible in the log.
+    let mut logged: HashMap<u8, u32> = HashMap::new();
 
     while shared.running.load(Ordering::Relaxed) {
         let packet = match divert.recv(None) {
@@ -155,6 +165,15 @@ fn run_flow_events(shared: Arc<Shared>) {
         let local = SocketAddr::new(addr.local_address(), addr.local_port());
         let remote = SocketAddr::new(addr.remote_address(), addr.remote_port());
         let pid = addr.process_id();
+
+        let seen = logged.entry(protocol).or_default();
+        if *seen < FLOW_EVENT_LOG_LIMIT {
+            *seen += 1;
+            tracing::info!(
+                "flow event: {:?} proto={protocol} local={local} remote={remote} pid={pid}",
+                addr.event()
+            );
+        }
 
         match addr.event() {
             WinDivertEvent::FlowStablished => {
@@ -185,6 +204,7 @@ fn run_aggregator(
 ) {
     tracing::info!("aggregator thread started");
     let ticker = crossbeam_channel::tick(Duration::from_secs(1));
+    let refresh = crossbeam_channel::tick(TABLE_REFRESH);
 
     loop {
         crossbeam_channel::select! {
@@ -231,6 +251,17 @@ fn run_aggregator(
                         break;
                     }
                 }
+            }
+            recv(refresh) -> _ => {
+                // Re-read the TCP/UDP owner tables: sockets created after the
+                // bootstrap (or never announced via a usable flow event) become
+                // attributable here. The four Win32 queries and any PID
+                // resolution they trigger run with no lock held - the engine
+                // locks `flows` on the packet hot path - and only the finished
+                // snapshot is applied under the lock.
+                let known = shared.flows.lock().unwrap().known_pids();
+                let snap = flows::query_socket_tables(&known);
+                shared.flows.lock().unwrap().apply_socket_snapshot(snap);
             }
             recv(ticker) -> _ => {
                 let (processes, total_down_rate, total_up_rate) =
