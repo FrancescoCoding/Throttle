@@ -18,6 +18,8 @@
 
 pub mod engine;
 pub mod flows;
+pub mod sockets;
+pub mod synthetic;
 pub mod rules;
 
 use std::collections::HashMap;
@@ -260,7 +262,7 @@ fn run_aggregator(
                 // locks `flows` on the packet hot path - and only the finished
                 // snapshot is applied under the lock.
                 let known = shared.flows.lock().unwrap().known_pids();
-                let snap = flows::query_socket_tables(&known);
+                let snap = sockets::query_socket_tables(&known);
                 shared.flows.lock().unwrap().apply_socket_snapshot(snap);
             }
             recv(ticker) -> _ => {

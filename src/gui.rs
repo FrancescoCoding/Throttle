@@ -10,7 +10,7 @@ use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
 use egui_plot::{Legend, Line, Plot, PlotPoints};
 
-use crate::backend::flows::is_shapable;
+use crate::backend::synthetic::is_shapable;
 use crate::types::{Command, ProcessStats, Rule, Snapshot};
 
 /// How many total-rate samples we keep for the header graph.

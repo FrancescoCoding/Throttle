@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 use windivert::prelude::*;
 use windivert_sys::ChecksumFlags;
 
-use super::flows;
+use super::synthetic;
 use super::Shared;
 
 /// Receive buffer size. WinDivert never hands us anything larger than a single
@@ -263,10 +263,10 @@ fn handle_packet(
     }
 
     // Look up the rule (cloned so we don't hold the rules lock). Synthetic rows
-    // ("Unknown", kernel "System") are never shaped: see `flows::is_shapable`.
+    // ("Unknown", kernel "System") are never shaped: see `synthetic::is_shapable`.
     let rule = exe
         .as_ref()
-        .filter(|e| flows::is_shapable(e))
+        .filter(|e| synthetic::is_shapable(e))
         .and_then(|e| shared.rules.lock().unwrap().get(e).cloned());
 
     match rule {
