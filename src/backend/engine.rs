@@ -262,8 +262,8 @@ fn handle_packet(
         }
     }
 
-    // Look up the rule (cloned so we don't hold the rules lock). Synthetic rows
-    // ("Unknown", kernel "System") are never shaped: see `synthetic::is_shapable`.
+    // Look up the rule (cloned so we don't hold the rules lock). The "Unknown"
+    // row is never shaped: see `synthetic::is_shapable`.
     let rule = exe
         .as_ref()
         .filter(|e| synthetic::is_shapable(e))

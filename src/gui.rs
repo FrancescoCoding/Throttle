@@ -11,7 +11,7 @@ use eframe::egui;
 use egui_plot::{Legend, Line, Plot, PlotPoints};
 
 use crate::backend::rules;
-use crate::backend::synthetic::is_shapable;
+use crate::backend::synthetic::{is_shapable, is_system};
 use crate::types::{Command, ProcessStats, Rule, Snapshot};
 
 /// How many total-rate samples we keep for the header graph.
@@ -632,15 +632,26 @@ impl ThrottleApp {
 
     fn row_context_menu(&mut self, resp: &egui::Response, key: &str, name: &str) {
         resp.context_menu(|ui| {
-            // The synthetic "Unknown" / "System" rows aggregate traffic we
-            // cannot safely shape, so they get no rule actions.
+            // The "Unknown" row is not a process but the traffic we failed to
+            // attribute, so it gets no rule actions.
             if !is_shapable(key) {
                 ui.label(
-                    egui::RichText::new("This row cannot be limited")
+                    egui::RichText::new("Unattributed traffic cannot be limited")
                         .weak()
                         .italics(),
                 );
                 return;
+            }
+            // System is shapable, but covers more than people expect.
+            if is_system(key) {
+                ui.label(
+                    egui::RichText::new(
+                        "Kernel traffic: includes VPN tunnels, network shares and Windows Update",
+                    )
+                    .weak()
+                    .small(),
+                );
+                ui.separator();
             }
             if ui.button("Set download limit…").clicked() {
                 self.open_limit_modal(key, name, Direction::Down);
