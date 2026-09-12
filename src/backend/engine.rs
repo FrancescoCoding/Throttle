@@ -53,11 +53,21 @@ pub struct EngineHandle(pub WinDivert<NetworkLayer>);
 unsafe impl Send for EngineHandle {}
 unsafe impl Sync for EngineHandle {}
 
+/// WinDivert filter for the network-layer handle.
+///
+/// Loopback traffic is excluded on purpose. It is never link traffic, so there
+/// is nothing to meter or shape, and re-injecting it is harmful: security
+/// software such as NordVPN Threat Protection redirects browser connections to
+/// a local proxy through a WFP connect-redirect, and a re-injected loopback
+/// packet loses that redirect state, so the connection never completes and the
+/// browser reports "connection closed" while every non-browser app still works.
+const NETWORK_FILTER: &str = "!loopback";
+
 /// Open the shared network-layer capture handle. Fails if not elevated or if
 /// the WinDivert driver files are missing.
 pub fn open() -> Result<EngineHandle, WinDivertError> {
     Ok(EngineHandle(WinDivert::network(
-        "true",
+        NETWORK_FILTER,
         0,
         WinDivertFlags::new(),
     )?))

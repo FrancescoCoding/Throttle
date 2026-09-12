@@ -99,6 +99,16 @@ WinDivert 2.2.2 release. If your AV quarantines `WinDivert64.sys` or
 `WinDivert.dll`, verify them against the official distribution at
 <https://reqrypt.org/windivert.html> and allow-list them if you trust the source.
 
+## VPNs and web-filtering proxies
+
+Some security products (for example NordVPN Threat Protection) intercept
+browser connections and route them through a local proxy on the same machine.
+While such a feature is active, the proxy process is the one talking to the
+internet, so Throttle shows the browser's traffic under the proxy's process
+(such as `nordsec-threatprotection-service`) and a limit set on the browser
+itself has no effect; set it on the proxy process instead. Throttle does not
+capture loopback traffic, so the interception itself keeps working.
+
 ## License
 
 - Throttle's own source code is licensed under the MIT License (see `LICENSE`).
