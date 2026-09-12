@@ -50,16 +50,22 @@ pub(crate) struct Shared {
 pub struct Backend {
     /// ~1 Hz stream of state snapshots for the GUI.
     pub snapshot_rx: Receiver<Snapshot>,
-    /// Worker thread handles, joined on shutdown / drop.
-    handles: Vec<JoinHandle<()>>,
+    /// The aggregator thread: the one that persists rules on shutdown.
+    aggregator: JoinHandle<()>,
+    /// The capture threads. Kept alive with the backend; not joined on exit
+    /// because they block in `WinDivert::recv` until the next packet arrives.
+    #[allow(dead_code)]
+    capture: Vec<JoinHandle<()>>,
 }
 
 impl Backend {
-    /// Signal shutdown (best-effort) and join the worker threads.
+    /// Wait for the aggregator to finish. Call this after sending
+    /// [`Command::Shutdown`] (or dropping the command sender) and before the
+    /// process exits: the aggregator writes `rules.json` on its way out, and
+    /// exiting underneath it leaves the file truncated, silently losing every
+    /// rule. The capture threads are left to die with the process.
     pub fn join(self) {
-        for h in self.handles {
-            let _ = h.join();
-        }
+        let _ = self.aggregator.join();
     }
 }
 
@@ -87,7 +93,7 @@ pub fn start(cmd_rx: Receiver<Command>) -> anyhow::Result<Backend> {
 
     let (snapshot_tx, snapshot_rx) = crossbeam_channel::unbounded::<Snapshot>();
 
-    let mut handles = Vec::with_capacity(4);
+    let mut handles = Vec::with_capacity(3);
 
     handles.push(spawn_named("throttle-flow-events", {
         let shared = shared.clone();
@@ -106,14 +112,15 @@ pub fn start(cmd_rx: Receiver<Command>) -> anyhow::Result<Backend> {
         move || engine::run_drainer(shared, handle)
     })?);
 
-    handles.push(spawn_named("throttle-aggregator", {
+    let aggregator = spawn_named("throttle-aggregator", {
         let shared = shared.clone();
         move || run_aggregator(shared, cmd_rx, snapshot_tx)
-    })?);
+    })?;
 
     Ok(Backend {
         snapshot_rx,
-        handles,
+        aggregator,
+        capture: handles,
     })
 }
 

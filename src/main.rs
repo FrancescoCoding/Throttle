@@ -118,6 +118,8 @@ fn main() -> eframe::Result {
                     }
                 }
                 let _ = cmd_tx.send(Command::Shutdown);
+                // Let the aggregator persist rules before we exit.
+                backend.join();
             }
             Err(e) => tracing::error!("headless: backend failed to start: {e:#}"),
         }
@@ -146,13 +148,18 @@ fn main() -> eframe::Result {
             // dropped only after the window closes, keeping the engine threads
             // running.
             tracing::info!("backend started; launching GUI");
-            eframe::run_native(
+            let result = eframe::run_native(
                 "Throttle",
                 native_options,
                 Box::new(move |cc| {
                     Ok(Box::new(gui::ThrottleApp::new(cc, snapshot_rx, cmd_tx)))
                 }),
-            )
+            );
+            // The app sent `Command::Shutdown` on close (and dropping it dropped
+            // the command sender). Wait for the aggregator to persist rules;
+            // returning before it has written the file truncates it.
+            backend.join();
+            result
         }
         Err(err) => {
             tracing::error!("backend failed to start: {err:#}");
