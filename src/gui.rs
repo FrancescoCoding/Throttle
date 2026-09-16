@@ -272,7 +272,7 @@ impl ThrottleApp {
     /// TODO: Looks ugly and could affect unrelated buttons, replace with "classes" in egui 0.37+:
     ///   https://github.com/emilk/egui/pull/8153
     ///   https://github.com/emilk/egui/blob/7ba3db/examples/styling_engine/src/main.rs
-    fn sort_header_button_style(&mut self, ui: &mut egui::Ui, col_selected: bool) {
+    fn sort_header_button_style(&self, ui: &mut egui::Ui, col_selected: bool) {
         let style = ui.style_mut();
         let widgets_style = &mut style.visuals.widgets;
 
@@ -294,21 +294,26 @@ impl ThrottleApp {
     fn sort_header(&mut self, ui: &mut egui::Ui, label: &str, col: SortColumn) {
         let text = egui::RichText::new(label).strong();
         let grow = egui::Atom::grow();
+        let col_selected = self.sort_column == col;
 
-        let direction_text = (self.sort_column == col)
-            .then_some(if self.sort_desc { "▼" } else { "▲" })
-            .unwrap_or_default();
+        let direction_text = if !col_selected {
+            ""
+        } else if self.sort_desc {
+            "▼"
+        } else {
+            "▲"
+        };
         // The default font is missing the arrows, use the bundled monospace font (Hack) instead
         let direction = egui::RichText::new(direction_text).monospace();
 
-        self.sort_header_button_style(ui, self.sort_column == col);
+        self.sort_header_button_style(ui, col_selected);
         let button = egui::Button::new((text, grow))
             .right_text(direction)
             .min_size(ui.available_size())
             .corner_radius(0);
 
         if ui.add(button).clicked() {
-            if self.sort_column == col {
+            if col_selected {
                 self.sort_desc = !self.sort_desc;
             } else {
                 self.sort_column = col;
