@@ -76,7 +76,12 @@ enum RateUnit {
 }
 
 impl RateUnit {
-    const ALL: [RateUnit; 4] = [RateUnit::Bps, RateUnit::KBps, RateUnit::MBps, RateUnit::GBps];
+    const ALL: [RateUnit; 4] = [
+        RateUnit::Bps,
+        RateUnit::KBps,
+        RateUnit::MBps,
+        RateUnit::GBps,
+    ];
 
     fn label(self) -> &'static str {
         match self {
@@ -422,49 +427,52 @@ impl ThrottleApp {
             .default_size(120.0)
             .min_size(70.0)
             .show(ui, |ui| {
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.heading("Throttle");
-                ui.separator();
-                ui.label(
-                    egui::RichText::new(format!("Down {}", humanize_rate(snap.total_down_rate)))
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.heading("Throttle");
+                    ui.separator();
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Down {}",
+                            humanize_rate(snap.total_down_rate)
+                        ))
                         .color(COLOR_DOWN)
                         .strong(),
-                );
-                ui.label(
-                    egui::RichText::new(format!("Up {}", humanize_rate(snap.total_up_rate)))
-                        .color(COLOR_UP)
-                        .strong(),
-                );
-                ui.separator();
-                ui.label(format!("{} processes", snap.processes.len()));
-            });
-
-            // Let the plot fill the panel's remaining height rather than
-            // requesting an explicit one. An explicit height derived from
-            // available_height() makes the content's reported size disagree
-            // with the drag target each frame, which egui persists as the new
-            // panel size and turns into a resize feedback loop. Filling avoids
-            // that.
-            Plot::new("total_plot")
-                .show_x(false)
-                .allow_zoom(false)
-                .allow_drag(false)
-                .allow_scroll(false)
-                .allow_boxed_zoom(false)
-                .legend(Legend::default())
-                .include_y(0.0)
-                .show(ui, |pui| {
-                    pui.line(
-                        Line::new("Down", PlotPoints::from_ys_f64(&self.total_down_hist))
-                            .color(COLOR_DOWN),
                     );
-                    pui.line(
-                        Line::new("Up", PlotPoints::from_ys_f64(&self.total_up_hist))
-                            .color(COLOR_UP),
+                    ui.label(
+                        egui::RichText::new(format!("Up {}", humanize_rate(snap.total_up_rate)))
+                            .color(COLOR_UP)
+                            .strong(),
                     );
+                    ui.separator();
+                    ui.label(format!("{} processes", snap.processes.len()));
                 });
-        });
+
+                // Let the plot fill the panel's remaining height rather than
+                // requesting an explicit one. An explicit height derived from
+                // available_height() makes the content's reported size disagree
+                // with the drag target each frame, which egui persists as the new
+                // panel size and turns into a resize feedback loop. Filling avoids
+                // that.
+                Plot::new("total_plot")
+                    .show_x(false)
+                    .allow_zoom(false)
+                    .allow_drag(false)
+                    .allow_scroll(false)
+                    .allow_boxed_zoom(false)
+                    .legend(Legend::default())
+                    .include_y(0.0)
+                    .show(ui, |pui| {
+                        pui.line(
+                            Line::new("Down", PlotPoints::from_ys_f64(&self.total_down_hist))
+                                .color(COLOR_DOWN),
+                        );
+                        pui.line(
+                            Line::new("Up", PlotPoints::from_ys_f64(&self.total_up_hist))
+                                .color(COLOR_UP),
+                        );
+                    });
+            });
     }
 
     fn draw_detail_panel(&mut self, ui: &mut egui::Ui, snap: &Snapshot) {
@@ -496,31 +504,33 @@ impl ThrottleApp {
                 ui.label(egui::RichText::new(&stats.exe_path).weak().small());
                 ui.separator();
 
-                egui::Grid::new("detail_grid").num_columns(2).show(ui, |ui| {
-                    ui.label("PID");
-                    ui.label(stats.pid.to_string());
-                    ui.end_row();
-                    ui.label("Flows");
-                    ui.label(stats.flow_count.to_string());
-                    ui.end_row();
-                    ui.label("Download");
-                    ui.label(
-                        egui::RichText::new(humanize_rate(stats.down_rate)).color(COLOR_DOWN),
-                    );
-                    ui.end_row();
-                    ui.label("Upload");
-                    ui.label(egui::RichText::new(humanize_rate(stats.up_rate)).color(COLOR_UP));
-                    ui.end_row();
-                    ui.label("Total down");
-                    ui.label(humanize_bytes(stats.down_total));
-                    ui.end_row();
-                    ui.label("Total up");
-                    ui.label(humanize_bytes(stats.up_total));
-                    ui.end_row();
-                    ui.label("Rule");
-                    ui.label(rule_summary(snap.rules.get(&key)));
-                    ui.end_row();
-                });
+                egui::Grid::new("detail_grid")
+                    .num_columns(2)
+                    .show(ui, |ui| {
+                        ui.label("PID");
+                        ui.label(stats.pid.to_string());
+                        ui.end_row();
+                        ui.label("Flows");
+                        ui.label(stats.flow_count.to_string());
+                        ui.end_row();
+                        ui.label("Download");
+                        ui.label(
+                            egui::RichText::new(humanize_rate(stats.down_rate)).color(COLOR_DOWN),
+                        );
+                        ui.end_row();
+                        ui.label("Upload");
+                        ui.label(egui::RichText::new(humanize_rate(stats.up_rate)).color(COLOR_UP));
+                        ui.end_row();
+                        ui.label("Total down");
+                        ui.label(humanize_bytes(stats.down_total));
+                        ui.end_row();
+                        ui.label("Total up");
+                        ui.label(humanize_bytes(stats.up_total));
+                        ui.end_row();
+                        ui.label("Rule");
+                        ui.label(rule_summary(snap.rules.get(&key)));
+                        ui.end_row();
+                    });
 
                 ui.separator();
                 ui.label("History (per second)");
@@ -537,7 +547,9 @@ impl ThrottleApp {
                     .legend(Legend::default())
                     .include_y(0.0)
                     .show(ui, |pui| {
-                        pui.line(Line::new("Down", PlotPoints::from_ys_f64(&down)).color(COLOR_DOWN));
+                        pui.line(
+                            Line::new("Down", PlotPoints::from_ys_f64(&down)).color(COLOR_DOWN),
+                        );
                         pui.line(Line::new("Up", PlotPoints::from_ys_f64(&up)).color(COLOR_UP));
                     });
             });
@@ -655,10 +667,8 @@ impl ThrottleApp {
                                     None
                                 };
                                 if let Some(fill) = fill {
-                                    ui.painter().set(
-                                        bg_idx,
-                                        egui::Shape::rect_filled(row_rect, 3.0, fill),
-                                    );
+                                    ui.painter()
+                                        .set(bg_idx, egui::Shape::rect_filled(row_rect, 3.0, fill));
                                 }
                                 ui.end_row();
                             }
@@ -743,7 +753,11 @@ impl ThrottleApp {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
                 ui.label(format!("Process: {}", modal.name));
-                ui.label(egui::RichText::new("Leave empty for unlimited.").weak().small());
+                ui.label(
+                    egui::RichText::new("Leave empty for unlimited.")
+                        .weak()
+                        .small(),
+                );
                 ui.horizontal(|ui| {
                     let resp = ui.add(
                         egui::TextEdit::singleline(&mut modal.value)
@@ -838,10 +852,10 @@ impl eframe::App for ThrottleApp {
         let snap = self.last_snapshot.clone();
 
         // Clear a stale selection so the side panel doesn't linger.
-        if let Some(sel) = &self.selected {
-            if !snap.processes.contains_key(sel) {
-                self.selected = None;
-            }
+        if let Some(sel) = &self.selected
+            && !snap.processes.contains_key(sel)
+        {
+            self.selected = None;
         }
 
         self.draw_menu_bar(ui);

@@ -19,8 +19,7 @@ use windows::Win32::NetworkManagement::IpHelper::{
     MIB_UDP6TABLE_OWNER_PID, MIB_UDPTABLE_OWNER_PID, TCP_TABLE_OWNER_PID_ALL, UDP_TABLE_OWNER_PID,
 };
 use windows::Win32::System::Threading::{
-    OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
-    PROCESS_QUERY_LIMITED_INFORMATION,
+    OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 use windows::core::PWSTR;
 
@@ -126,8 +125,7 @@ fn query_image_path(pid: u32) -> Option<String> {
         return None;
     }
     unsafe {
-        let handle: HANDLE =
-            OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let handle: HANDLE = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
 
         let mut buf = vec![0u16; 512];
         let mut size = buf.len() as u32;

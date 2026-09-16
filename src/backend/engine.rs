@@ -17,15 +17,15 @@
 
 use std::collections::VecDeque;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use windivert::prelude::*;
 use windivert_sys::ChecksumFlags;
 
-use super::synthetic;
 use super::Shared;
+use super::synthetic;
 
 /// Receive buffer size. WinDivert never hands us anything larger than a single
 /// (possibly offloaded) IP packet; 64 KiB covers the maximum.
@@ -204,8 +204,14 @@ pub fn run_engine(shared: Arc<Shared>, handle: Arc<EngineHandle>) {
         if last_report.elapsed() >= Duration::from_secs(5) {
             tracing::info!(
                 "engine 5s: recv_ok={} recv_err={} sent={} send_err={} calc_err={} unattributed={} queued={} dropped={}",
-                stats.recv_ok, stats.recv_err, stats.sent, stats.send_err,
-                stats.calc_err, stats.unattributed, stats.queued, stats.dropped
+                stats.recv_ok,
+                stats.recv_err,
+                stats.sent,
+                stats.send_err,
+                stats.calc_err,
+                stats.unattributed,
+                stats.queued,
+                stats.dropped
             );
             for sample in &stats.unattributed_samples {
                 tracing::info!("engine 5s: unattributed sample {sample}");
@@ -248,11 +254,7 @@ fn handle_packet(
     let exe = match parsed {
         Some((proto, src, dst)) => {
             let (local, remote) = if outbound { (src, dst) } else { (dst, src) };
-            shared
-                .flows
-                .lock()
-                .unwrap()
-                .exe_for(proto, local, remote)
+            shared.flows.lock().unwrap().exe_for(proto, local, remote)
         }
         None => None,
     };
@@ -281,7 +283,15 @@ fn handle_packet(
 
     match rule {
         // No process match, or no rule: pass through untouched.
-        None => send_and_count(divert, shared, &packet, exe.as_deref(), outbound, len, stats),
+        None => send_and_count(
+            divert,
+            shared,
+            &packet,
+            exe.as_deref(),
+            outbound,
+            len,
+            stats,
+        ),
         // Blocked: drop everything for this process.
         Some(r) if r.blocked => {
             stats.dropped += 1;
@@ -290,7 +300,15 @@ fn handle_packet(
             let limit = if outbound { r.up_limit } else { r.down_limit };
             match limit {
                 // This direction is unlimited: pass through.
-                None => send_and_count(divert, shared, &packet, exe.as_deref(), outbound, len, stats),
+                None => send_and_count(
+                    divert,
+                    shared,
+                    &packet,
+                    exe.as_deref(),
+                    outbound,
+                    len,
+                    stats,
+                ),
                 // An explicit zero limit means "block this direction".
                 Some(0) => {
                     stats.dropped += 1;
@@ -340,8 +358,11 @@ fn send_and_count(
 ) {
     if let Err(e) = divert.send(packet) {
         stats.send_err += 1;
-        if stats.send_err <= 5 || stats.send_err % 500 == 0 {
-            tracing::warn!("engine: send failed (#{}) len={len} outbound={outbound}: {e}", stats.send_err);
+        if stats.send_err <= 5 || stats.send_err.is_multiple_of(500) {
+            tracing::warn!(
+                "engine: send failed (#{}) len={len} outbound={outbound}: {e}",
+                stats.send_err
+            );
         }
         return;
     }

@@ -102,8 +102,7 @@ mod tests {
         );
 
         let json = serde_json::to_string_pretty(&rules).expect("serialize");
-        let back: HashMap<String, Rule> =
-            serde_json::from_str(&json).expect("deserialize");
+        let back: HashMap<String, Rule> = serde_json::from_str(&json).expect("deserialize");
 
         assert_eq!(rules, back);
     }

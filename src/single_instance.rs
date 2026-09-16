@@ -7,12 +7,12 @@
 //! Because Throttle always runs elevated, the mutex lives in the `Global\`
 //! namespace so instances in different sessions still see each other.
 
-use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HANDLE, HWND};
+use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HANDLE, HWND};
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowW, IsIconic, SetForegroundWindow, ShowWindow, SW_RESTORE,
+    FindWindowW, IsIconic, SW_RESTORE, SetForegroundWindow, ShowWindow,
 };
+use windows::core::{PCWSTR, w};
 
 /// Title of the main window, used to locate an already-running instance.
 const WINDOW_TITLE: PCWSTR = w!("Throttle");

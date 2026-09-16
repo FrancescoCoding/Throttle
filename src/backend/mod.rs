@@ -18,9 +18,9 @@
 
 pub mod engine;
 pub mod flows;
+pub mod rules;
 pub mod sockets;
 pub mod synthetic;
-pub mod rules;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -206,11 +206,7 @@ fn run_flow_events(shared: Arc<Shared>) {
 }
 
 /// Aggregator thread: emit a snapshot every second and apply commands.
-fn run_aggregator(
-    shared: Arc<Shared>,
-    cmd_rx: Receiver<Command>,
-    snapshot_tx: Sender<Snapshot>,
-) {
+fn run_aggregator(shared: Arc<Shared>, cmd_rx: Receiver<Command>, snapshot_tx: Sender<Snapshot>) {
     tracing::info!("aggregator thread started");
     let ticker = crossbeam_channel::tick(Duration::from_secs(1));
     let refresh = crossbeam_channel::tick(TABLE_REFRESH);

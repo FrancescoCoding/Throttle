@@ -28,9 +28,9 @@
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 
-use super::sockets::{query_socket_tables, resolve_pid_path, SocketSnapshot};
-use super::synthetic::{display_name, UNKNOWN_EXE};
-use crate::types::{ProcessStats, HISTORY_LEN};
+use super::sockets::{SocketSnapshot, query_socket_tables, resolve_pid_path};
+use super::synthetic::{UNKNOWN_EXE, display_name};
+use crate::types::{HISTORY_LEN, ProcessStats};
 
 /// Key of the port-owner fallback map: `(protocol, is_ipv6, local port)`. The
 /// address family is part of the key because a v4 and a v6 socket may bind the
@@ -155,21 +155,17 @@ impl FlowTable {
             c.pid = pid;
             self.note_port_owner(protocol, local, exe_path.clone(), recent);
         }
-        self.flows
-            .insert(FlowKey::new(protocol, local, remote), FlowEntry { pid, exe_path });
+        self.flows.insert(
+            FlowKey::new(protocol, local, remote),
+            FlowEntry { pid, exe_path },
+        );
     }
 
     /// Record only the port ownership, without a 5-tuple. Used for listening /
     /// unconnected sockets from the UDP table. `recent` marks the entry as
     /// learned from a live event, so it survives the next authoritative rebuild
     /// of the port map.
-    fn insert_port_owner_inner(
-        &mut self,
-        protocol: u8,
-        local: SocketAddr,
-        pid: u32,
-        recent: bool,
-    ) {
+    fn insert_port_owner_inner(&mut self, protocol: u8, local: SocketAddr, pid: u32, recent: bool) {
         let exe_path = self.resolve_path(pid).unwrap_or_default();
         if exe_path.is_empty() {
             return;
@@ -217,10 +213,10 @@ impl FlowTable {
             .flows
             .get(&FlowKey::new(protocol, local, remote))
             .or_else(|| self.flows.get(&FlowKey::new(protocol, remote, local)));
-        if let Some(entry) = direct {
-            if !entry.exe_path.is_empty() {
-                return Some(entry.exe_path.clone());
-            }
+        if let Some(entry) = direct
+            && !entry.exe_path.is_empty()
+        {
+            return Some(entry.exe_path.clone());
         }
         self.port_owners.get(&port_key(protocol, local)).cloned()
     }
@@ -366,7 +362,7 @@ fn push_history(history: &mut Vec<u64>, value: u64) {
 mod tests {
     use super::*;
     use crate::backend::sockets::{IPPROTO_TCP, IPPROTO_UDP};
-    use crate::backend::synthetic::SYSTEM_EXE;
+
     use std::net::{IpAddr, Ipv4Addr};
 
     fn sa(a: [u8; 4], p: u16) -> SocketAddr {
