@@ -117,7 +117,7 @@ pub fn ico_bytes() -> Vec<u8> {
     let rgba = rgba();
 
     // BITMAPINFOHEADER (40 bytes) + XOR (BGRA, bottom-up) + AND mask.
-    let and_stride = ((w + 31) / 32) * 4; // row-padded to 32 bits
+    let and_stride = w.div_ceil(32) * 4; // row-padded to 32 bits
     let dib_size = 40 + w * h * 4 + and_stride * h;
 
     let mut ico = Vec::new();
@@ -159,10 +159,6 @@ pub fn ico_bytes() -> Vec<u8> {
         }
     }
     // AND mask: fully opaque (alpha already carries transparency).
-    for _ in 0..h {
-        for _ in 0..and_stride {
-            ico.push(0);
-        }
-    }
+    ico.extend(std::iter::repeat_n(0u8, h * and_stride));
     ico
 }

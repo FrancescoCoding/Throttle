@@ -39,10 +39,7 @@ pub fn display_name(exe: &str) -> String {
 
 /// Extract the filename portion of a Windows or Unix-style path.
 fn file_name(path: &str) -> String {
-    path.rsplit(['\\', '/'])
-        .next()
-        .unwrap_or(path)
-        .to_string()
+    path.rsplit(['\\', '/']).next().unwrap_or(path).to_string()
 }
 
 #[cfg(test)]

@@ -5,7 +5,10 @@
 
 // Hide the extra console window on Windows release builds; keep it in debug so
 // `tracing` output is visible while developing.
-#![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
 
 mod backend;
 mod gui;
@@ -83,10 +86,9 @@ fn main() -> eframe::Result {
                 for (name, addr) in &targets {
                     let t0 = std::time::Instant::now();
                     match TcpStream::connect_timeout(addr, std::time::Duration::from_secs(3)) {
-                        Ok(_) => tracing::info!(
-                            "probe {name}: OK in {} ms",
-                            t0.elapsed().as_millis()
-                        ),
+                        Ok(_) => {
+                            tracing::info!("probe {name}: OK in {} ms", t0.elapsed().as_millis())
+                        }
                         Err(e) => tracing::warn!("probe {name}: FAILED: {e}"),
                     }
                 }
@@ -151,9 +153,7 @@ fn main() -> eframe::Result {
             let result = eframe::run_native(
                 "Throttle",
                 native_options,
-                Box::new(move |cc| {
-                    Ok(Box::new(gui::ThrottleApp::new(cc, snapshot_rx, cmd_tx)))
-                }),
+                Box::new(move |cc| Ok(Box::new(gui::ThrottleApp::new(cc, snapshot_rx, cmd_tx)))),
             );
             // The app sent `Command::Shutdown` on close (and dropping it dropped
             // the command sender). Wait for the aggregator to persist rules;
