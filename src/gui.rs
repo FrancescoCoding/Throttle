@@ -262,10 +262,47 @@ impl ThrottleApp {
         });
     }
 
+    /// Adjust the style to make sort headers look less like regular buttons.
+    /// This only affects the local Ui (the Grid), not Menus or Modals.
+    /// TODO: Looks ugly and could affect unrelated buttons, replace with "classes" in egui 0.37+:
+    ///   https://github.com/emilk/egui/pull/8153
+    ///   https://github.com/emilk/egui/blob/7ba3db/examples/styling_engine/src/main.rs
+    fn sort_header_button_style(&mut self, ui: &mut egui::Ui, col_selected: bool) {
+        let style = ui.style_mut();
+        let widgets_style = &mut style.visuals.widgets;
+
+        let transparent = egui::Color32::TRANSPARENT;
+        // Use a gray-ish luminance (0.3) with variable opacity -> works for light and dark theme
+        let selected = egui::Rgba::from_luminance_alpha(0.3, 0.15).into();
+        let hovered = egui::Rgba::from_luminance_alpha(0.3, 0.25).into();
+
+        widgets_style.active.weak_bg_fill = hovered; // "active" = while being clicked
+        widgets_style.hovered.weak_bg_fill = hovered;
+        widgets_style.inactive.weak_bg_fill = if col_selected { selected } else { transparent };
+
+        widgets_style.active.bg_stroke = egui::Stroke::NONE;
+        widgets_style.hovered.bg_stroke = egui::Stroke::NONE;
+        widgets_style.inactive.bg_stroke = egui::Stroke::NONE;
+    }
+
     /// Adjust the sort state when a header is clicked.
     fn sort_header(&mut self, ui: &mut egui::Ui, label: &str, col: SortColumn) {
         let text = egui::RichText::new(label).strong();
-        if ui.button(text).clicked() {
+        let grow = egui::Atom::grow();
+
+        let direction_text = (self.sort_column == col)
+            .then_some(if self.sort_desc { "▼" } else { "▲" })
+            .unwrap_or_default();
+        // The default font is missing the arrows, use the bundled monospace font (Hack) instead
+        let direction = egui::RichText::new(direction_text).monospace();
+
+        self.sort_header_button_style(ui, self.sort_column == col);
+        let button = egui::Button::new((text, grow))
+            .right_text(direction)
+            .min_size(ui.available_size())
+            .corner_radius(0);
+
+        if ui.add(button).clicked() {
             if self.sort_column == col {
                 self.sort_desc = !self.sort_desc;
             } else {
