@@ -42,22 +42,7 @@ fn main() -> eframe::Result {
         None => return Ok(()),
     };
 
-    // Log to %APPDATA%\Throttle\throttle.log. The release binary has no
-    // console, so a file is the only way to diagnose the driver/engine.
-    let log_dir = std::env::var("APPDATA")
-        .map(|a| std::path::PathBuf::from(a).join("Throttle"))
-        .unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let _ = std::fs::create_dir_all(&log_dir);
-    match std::fs::File::create(log_dir.join("throttle.log")) {
-        Ok(file) => tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::INFO)
-            .with_ansi(false)
-            .with_writer(std::sync::Mutex::new(file))
-            .init(),
-        Err(_) => tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::INFO)
-            .init(),
-    }
+    setup_logging();
 
     // Panics in worker threads are otherwise invisible (no console): log them.
     std::panic::set_hook(Box::new(|info| {
@@ -170,6 +155,30 @@ fn main() -> eframe::Result {
                 native_options,
                 Box::new(move |_cc| Ok(Box::new(gui::ErrorApp::new(message.clone())))),
             )
+        }
+    }
+}
+
+fn setup_logging() {
+    if cfg!(debug_assertions) {
+        // Use the terminal in debug builds
+        tracing_subscriber::fmt().init()
+    } else {
+        // Log to %APPDATA%\Throttle\throttle.log. The release binary has no
+        // console, so a file is the only way to diagnose the driver/engine.
+        let log_dir = std::env::var("APPDATA")
+            .map(|a| std::path::PathBuf::from(a).join("Throttle"))
+            .unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let _ = std::fs::create_dir_all(&log_dir);
+        match std::fs::File::create(log_dir.join("throttle.log")) {
+            Ok(file) => tracing_subscriber::fmt()
+                .with_max_level(tracing::Level::INFO)
+                .with_ansi(false)
+                .with_writer(std::sync::Mutex::new(file))
+                .init(),
+            Err(_) => tracing_subscriber::fmt()
+                .with_max_level(tracing::Level::INFO)
+                .init(),
         }
     }
 }
