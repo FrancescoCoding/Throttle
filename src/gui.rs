@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
+use eframe::egui::Widget;
 use egui_plot::{Legend, Line, Plot, PlotPoints};
 
 use crate::backend::rules;
@@ -584,102 +585,84 @@ impl ThrottleApp {
             if sort_desc { ord.reverse() } else { ord }
         });
 
+        const SORT_COLUMN_LABELS: [(SortColumn, &str); 6] = [
+            (SortColumn::Name, "Process"),
+            (SortColumn::Flows, "Flows"),
+            (SortColumn::Down, "Down"),
+            (SortColumn::Up, "Up"),
+            (SortColumn::DownTotal, "Total down"),
+            (SortColumn::UpTotal, "Total up"),
+        ];
+
         egui::CentralPanel::default().show(ui, |ui| {
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    // Spread the columns across the full available width so the
-                    // table doesn't huddle in the left corner of wide windows.
-                    let col_width = ((ui.available_width() - 6.0 * 16.0) / 7.0).max(60.0);
-                    egui::Grid::new("proc_grid")
-                        .num_columns(7)
-                        .striped(true)
-                        .spacing([16.0, 4.0])
-                        .min_col_width(col_width)
-                        .show(ui, |ui| {
-                            self.sort_header(ui, "Process", SortColumn::Name);
-                            self.sort_header(ui, "Flows", SortColumn::Flows);
-                            self.sort_header(ui, "Down", SortColumn::Down);
-                            self.sort_header(ui, "Up", SortColumn::Up);
-                            self.sort_header(ui, "Total down", SortColumn::DownTotal);
-                            self.sort_header(ui, "Total up", SortColumn::UpTotal);
-                            ui.label(egui::RichText::new("Rule").strong());
-                            ui.end_row();
+            egui_extras::TableBuilder::new(ui)
+                .resizable(true)
+                .auto_shrink(false)
+                .striped(true)
+                .sense(egui::Sense::CLICK | egui::Sense::HOVER)
+                .column(egui_extras::Column::remainder().at_least(200.)) // Name
+                .columns(egui_extras::Column::auto(), 5) // Numeric
+                .column(egui_extras::Column::remainder()) // Rule
+                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                .header(20., |mut row| {
+                    for (sort_column, label) in SORT_COLUMN_LABELS {
+                        row.col(|ui| self.sort_header(ui, label, sort_column));
+                    }
+                    row.col(|ui| {
+                        ui.label(egui::RichText::new("Rule").strong());
+                    });
+                })
+                .body(|body| {
+                    body.rows(20., rows.len(), |row| {
+                        let (key, stats) = rows.get(row.index()).expect("row index in bounds");
 
-                            for (key, stats) in &rows {
-                                let selected = self.selected.as_deref() == Some(key.as_str());
-
-                                let rule = snap.rules.get(key);
-                                let summary = rule_summary(rule);
-                                let rule_text = if rule.map(|r| r.blocked).unwrap_or(false) {
-                                    egui::RichText::new(summary).color(COLOR_BLOCK).strong()
-                                } else {
-                                    egui::RichText::new(summary)
-                                };
-
-                                let cells: [egui::RichText; 7] = [
-                                    egui::RichText::new(&stats.name),
-                                    egui::RichText::new(stats.flow_count.to_string()),
-                                    egui::RichText::new(humanize_rate(stats.down_rate))
-                                        .color(COLOR_DOWN),
-                                    egui::RichText::new(humanize_rate(stats.up_rate))
-                                        .color(COLOR_UP),
-                                    egui::RichText::new(humanize_bytes(stats.down_total)),
-                                    egui::RichText::new(humanize_bytes(stats.up_total)),
-                                    rule_text,
-                                ];
-
-                                // Reserve a shape slot before the cells so the
-                                // row highlight paints behind the text; it is
-                                // filled once we know the row's vertical extent.
-                                let bg_idx = ui.painter().add(egui::Shape::Noop);
-                                let mut y_min = f32::INFINITY;
-                                let mut y_max = f32::NEG_INFINITY;
-
-                                // Cells are plain labels; interaction is handled
-                                // by one full-width region below so clicking
-                                // anywhere on the row (gaps included) selects it.
-                                for text in cells {
-                                    let resp = ui.add(egui::Label::new(text).selectable(false));
-                                    y_min = y_min.min(resp.rect.top());
-                                    y_max = y_max.max(resp.rect.bottom());
-                                }
-
-                                // Full-width row rect: spans the grid's whole
-                                // width, covering column gaps and trailing space.
-                                let row_rect = egui::Rect::from_x_y_ranges(
-                                    ui.max_rect().x_range(),
-                                    egui::Rangef::new(y_min, y_max),
-                                );
-
-                                // One interactive region over the entire row.
-                                let row_resp = ui.interact(
-                                    row_rect,
-                                    egui::Id::new(("proc_row", key.as_str())),
-                                    egui::Sense::click(),
-                                );
-                                if row_resp.clicked() {
-                                    self.selected = Some(key.clone());
-                                }
-                                self.row_context_menu(&row_resp, key, &stats.name);
-
-                                // Highlight the selected row, or tint on hover.
-                                let fill = if selected {
-                                    Some(ui.visuals().selection.bg_fill)
-                                } else if row_resp.hovered() {
-                                    Some(ui.visuals().widgets.hovered.bg_fill.gamma_multiply(0.5))
-                                } else {
-                                    None
-                                };
-                                if let Some(fill) = fill {
-                                    ui.painter()
-                                        .set(bg_idx, egui::Shape::rect_filled(row_rect, 3.0, fill));
-                                }
-                                ui.end_row();
-                            }
-                        });
+                        let resp = self.draw_table_row(row, key, stats, snap);
+                        if resp.clicked() || resp.secondary_clicked() {
+                            self.selected = Some(key.clone());
+                        }
+                        self.row_context_menu(&resp, key, &stats.name);
+                    });
                 });
         });
+    }
+
+    fn draw_table_row(
+        &mut self,
+        mut row: egui_extras::TableRow,
+        key: &String,
+        stats: &ProcessStats,
+        snap: &Snapshot,
+    ) -> egui::Response {
+        let selected = self.selected.as_deref() == Some(key.as_str());
+
+        let rule = snap.rules.get(key);
+        let summary = rule_summary(rule);
+        let rule_text = if rule.map(|r| r.blocked).unwrap_or(false) {
+            egui::RichText::new(summary).color(COLOR_BLOCK).strong()
+        } else {
+            egui::RichText::new(summary)
+        };
+
+        let cells: [egui::RichText; 7] = [
+            egui::RichText::new(&stats.name),
+            egui::RichText::new(stats.flow_count.to_string()),
+            egui::RichText::new(humanize_rate(stats.down_rate)).color(COLOR_DOWN),
+            egui::RichText::new(humanize_rate(stats.up_rate)).color(COLOR_UP),
+            egui::RichText::new(humanize_bytes(stats.down_total)),
+            egui::RichText::new(humanize_bytes(stats.up_total)),
+            rule_text,
+        ];
+        row.set_selected(selected);
+        for content in cells {
+            row.col(|ui| {
+                egui::Label::new(content)
+                    .wrap_mode(egui::TextWrapMode::Truncate)
+                    .selectable(false)
+                    .ui(ui);
+            });
+        }
+
+        row.response()
     }
 
     fn row_context_menu(&mut self, resp: &egui::Response, key: &str, name: &str) {

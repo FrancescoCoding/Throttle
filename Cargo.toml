@@ -10,6 +10,7 @@ license = "MIT"
 anyhow = "1.0.103"
 crossbeam-channel = "0.5.16"
 eframe = "0.36.2"
+egui_extras = "0.36.2"
 egui_plot = "0.37.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
