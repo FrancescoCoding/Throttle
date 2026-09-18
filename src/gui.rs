@@ -601,7 +601,7 @@ impl ThrottleApp {
                 .striped(true)
                 .sense(egui::Sense::CLICK | egui::Sense::HOVER)
                 .column(egui_extras::Column::remainder().at_least(200.)) // Name
-                .columns(egui_extras::Column::auto().auto_size_this_frame(true), 5) // Numeric
+                .columns(egui_extras::Column::auto(), 5) // Numeric
                 .column(egui_extras::Column::remainder()) // Rule
                 .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                 .header(20., |mut row| {
