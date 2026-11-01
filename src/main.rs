@@ -129,8 +129,11 @@ fn main() -> eframe::Result {
 
     let settings = settings::load();
     // The startup task passes --tray; "Start minimised" covers manual launches.
-    let start_hidden =
-        std::env::args().any(|a| a == autostart::TRAY_FLAG) || settings.start_minimized;
+    // A relaunch after an in-app update (--wait-pid) always shows the window,
+    // so the user sees the update finish.
+    let relaunched_by_update = std::env::args().any(|a| a == "--wait-pid");
+    let start_hidden = !relaunched_by_update
+        && (std::env::args().any(|a| a == autostart::TRAY_FLAG) || settings.start_minimized);
 
     let app_icon = eframe::egui::IconData {
         rgba: icon::rgba(),
@@ -176,6 +179,9 @@ fn main() -> eframe::Result {
         Err(err) => {
             tracing::error!("backend failed to start: {err:#}");
             let message = format!("{err:#}");
+            // A second launch should raise the error window. It never hides to
+            // the tray, so raising it directly is safe.
+            single_instance::on_show_request(|| single_instance::focus_window("Throttle"));
             // Show the error in a minimal window instead of exiting silently.
             eframe::run_native(
                 "Throttle error",

@@ -12,6 +12,8 @@
 //! window's visibility, so showing it from outside would leave winit thinking
 //! it is still hidden, and the next hide to the tray would do nothing.
 
+use std::sync::OnceLock;
+
 use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HANDLE, HWND, WAIT_OBJECT_0};
 use windows::Win32::System::Threading::{
     CreateEventW, CreateMutexW, EVENT_MODIFY_STATE, INFINITE, OpenEventW, SetEvent,
@@ -21,13 +23,18 @@ use windows::Win32::UI::WindowsAndMessaging::{
     ASFW_ANY, AllowSetForegroundWindow, FindWindowW, IsIconic, SW_RESTORE, SetForegroundWindow,
     ShowWindow,
 };
-use windows::core::{PCWSTR, w};
+use windows::core::{HSTRING, PCWSTR, w};
 
 /// Title of the main window, used to locate an already-running instance.
-const WINDOW_TITLE: PCWSTR = w!("Throttle");
+const WINDOW_TITLE: &str = "Throttle";
 
 /// Auto-reset event a second launch signals to bring the running window back.
 const SHOW_EVENT: PCWSTR = w!("Global\\ThrottleShowRequest");
+
+/// The show event, created with the lock so a second launch during startup
+/// (driver load, window creation) is not lost: the auto-reset event stays
+/// signalled until `on_show_request` starts waiting on it.
+static SHOW_EVENT_HANDLE: OnceLock<usize> = OnceLock::new();
 
 /// Held for the life of the process. Dropping it would release the mutex, so
 /// the handle is intentionally never closed.
@@ -49,25 +56,27 @@ pub fn acquire() -> Option<InstanceLock> {
         if GetLastError() == ERROR_ALREADY_EXISTS {
             if !request_show() {
                 // A build without the show event: fall back to raising its window.
-                focus_existing_window();
+                focus_window(WINDOW_TITLE);
             }
             return None;
+        }
+        // The handle is valid for the process lifetime and intentionally never closed.
+        match CreateEventW(None, false, false, SHOW_EVENT) {
+            Ok(event) => {
+                let _ = SHOW_EVENT_HANDLE.set(event.0 as usize);
+            }
+            Err(e) => tracing::warn!("show-request event unavailable: {e}"),
         }
         Some(InstanceLock { handle })
     }
 }
 
 /// Run `on_request` every time a second launch asks this instance to show
-/// itself. The callback runs on a dedicated background thread.
+/// itself, including a request made before this was called. The callback runs
+/// on a dedicated background thread.
 pub fn on_show_request(on_request: impl Fn() + Send + 'static) {
-    // SAFETY: plain Win32 calls; the handle is valid for the process lifetime
-    // and intentionally never closed.
-    let event = match unsafe { CreateEventW(None, false, false, SHOW_EVENT) } {
-        Ok(h) => h.0 as usize,
-        Err(e) => {
-            tracing::warn!("show-request event unavailable: {e}");
-            return;
-        }
+    let Some(&event) = SHOW_EVENT_HANDLE.get() else {
+        return;
     };
     std::thread::Builder::new()
         .name("show-request".into())
@@ -96,12 +105,14 @@ fn request_show() -> bool {
     }
 }
 
-/// Best-effort: restore and raise the existing instance's main window.
-fn focus_existing_window() {
+/// Best-effort: restore and raise the window titled `title`. Not for a window
+/// that may be hidden to the tray, since showing it from outside winit would
+/// desync winit's cached visibility.
+pub fn focus_window(title: &str) {
     // SAFETY: FindWindowW returns a null HWND when nothing matches; all calls
     // tolerate that and return failure rather than faulting.
     unsafe {
-        let hwnd: HWND = match FindWindowW(None, WINDOW_TITLE) {
+        let hwnd: HWND = match FindWindowW(None, &HSTRING::from(title)) {
             Ok(h) if !h.is_invalid() => h,
             _ => return,
         };

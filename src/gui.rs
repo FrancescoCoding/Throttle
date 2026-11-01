@@ -4,7 +4,7 @@
 //! This file is built against the shared contract in `crate::types` and must
 //! not depend on any backend internals beyond the `snapshot_rx` receiver.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
@@ -28,6 +28,9 @@ const REPO_URL: &str = env!("CARGO_PKG_REPOSITORY");
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Version of the bundled WinDivert driver (see `vendor/`).
 const WINDIVERT_VERSION: &str = "2.2.2";
+
+/// How long a start in the tray waits for the taskbar before staying visible.
+const START_HIDDEN_WAIT: Duration = Duration::from_secs(60);
 
 const COLOR_DOWN: egui::Color32 = egui::Color32::from_rgb(0x4c, 0xaf, 0x50);
 const COLOR_UP: egui::Color32 = egui::Color32::from_rgb(0x21, 0x96, 0xf3);
@@ -208,8 +211,9 @@ pub struct ThrottleApp {
     hidden: bool,
     /// Whether the window was minimised last frame, to catch the moment it is.
     was_minimized: bool,
-    /// Hide to the tray on the first frame (`--tray` or "Start minimised").
-    start_hidden: bool,
+    /// Hide to the tray once the taskbar exists (`--tray` or "Start minimised"),
+    /// unless it has not appeared by this deadline.
+    start_hidden: Option<Instant>,
     /// A real exit is under way, so a close request must not go to the tray.
     exiting: bool,
 
@@ -267,7 +271,7 @@ impl ThrottleApp {
             tray_rx,
             hidden: false,
             was_minimized: false,
-            start_hidden,
+            start_hidden: start_hidden.then(|| Instant::now() + START_HIDDEN_WAIT),
             exiting: false,
             update_rx: update_check::spawn(APP_VERSION),
             update: None,
@@ -1070,14 +1074,27 @@ impl eframe::App for ThrottleApp {
             self.last_snapshot = snap;
         }
 
-        if std::mem::take(&mut self.start_hidden) {
-            self.hide_to_tray(ctx);
+        // At logon the startup task can run before Explorer has created the
+        // taskbar. The tray icon is then only added once it appears, so wait for
+        // it rather than hide with no icon to click; give up and stay visible if
+        // it takes too long.
+        if let Some(deadline) = self.start_hidden {
+            if taskbar_ready() {
+                self.start_hidden = None;
+                self.hide_to_tray(ctx);
+            } else if Instant::now() >= deadline {
+                tracing::warn!("taskbar not found; starting visible instead of in the tray");
+                self.start_hidden = None;
+            }
         }
 
         let actions: Vec<TrayAction> = self.tray_rx.try_iter().collect();
         for action in actions {
             match action {
-                TrayAction::Show => self.show_window(ctx),
+                TrayAction::Show => {
+                    self.start_hidden = None;
+                    self.show_window(ctx);
+                }
                 TrayAction::Exit => self.exit(ctx),
             }
         }
@@ -1146,8 +1163,9 @@ impl Drop for ThrottleApp {
 // ---------------------------------------------------------------------------
 
 /// Create the tray icon: left click shows the window, right click opens a
-/// Show / Exit menu. Returns `None` (logged) if the shell refuses the icon,
-/// e.g. Explorer is not running yet.
+/// Show / Exit menu. Returns `None` (logged) if it cannot be created. If the
+/// taskbar does not exist yet, tray-icon still succeeds and adds the icon when
+/// Explorer announces the taskbar (see `taskbar_ready`).
 fn create_tray(ctx: &egui::Context, tx: Sender<TrayAction>) -> Option<TrayIcon> {
     let show = MenuItem::new("Show Throttle", true, None);
     let exit = MenuItem::new("Exit", true, None);
@@ -1207,16 +1225,23 @@ fn create_tray(ctx: &egui::Context, tx: Sender<TrayAction>) -> Option<TrayIcon> 
     }
 }
 
-/// Check the startup task off the UI thread (`schtasks` takes a moment). An
-/// existing task is re-pointed at this exe, in case Throttle was moved (not
-/// needed when the task itself launched us).
+/// Whether Explorer's taskbar (and so the notification area) exists.
+fn taskbar_ready() -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
+    use windows::core::w;
+    // SAFETY: FindWindowW with a valid static class name; a miss is an error.
+    unsafe { FindWindowW(w!("Shell_TrayWnd"), None) }.is_ok_and(|h| !h.is_invalid())
+}
+
+/// Check the startup task off the UI thread (`schtasks` takes a moment). The
+/// task is re-pointed at this exe only if the exe it starts no longer exists
+/// (Throttle was moved): running another copy once must not take it over.
 fn spawn_autostart_check() -> Receiver<bool> {
     let (tx, rx) = crossbeam_channel::bounded(1);
-    let launched_by_task = std::env::args().any(|a| a == autostart::TRAY_FLAG);
     std::thread::spawn(move || {
         let enabled = autostart::is_enabled();
         if enabled
-            && !launched_by_task
+            && autostart::task_command().is_some_and(|cmd| !cmd.exists())
             && let Ok(exe) = std::env::current_exe()
             && let Err(e) = autostart::enable(&exe)
         {

@@ -10,8 +10,9 @@
 //! stored in `settings.json`.
 
 use std::os::windows::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use anyhow::{Context, bail};
 
@@ -36,15 +37,32 @@ pub fn is_enabled() -> bool {
     schtasks(&["/Query", "/TN", TASK_NAME]).is_ok_and(|out| out.status.success())
 }
 
+/// The program the logon task starts, or `None` if there is no task or its
+/// definition cannot be read.
+pub fn task_command() -> Option<PathBuf> {
+    let out = schtasks(&["/Query", "/TN", TASK_NAME, "/XML"]).ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_command(&String::from_utf8_lossy(&out.stdout)).map(PathBuf::from)
+}
+
 /// Create (or replace) the logon task so it starts `exe` in the tray.
 pub fn enable(exe: &Path) -> anyhow::Result<()> {
+    // The UI and the startup check can both call this; give each its own file.
+    static NEXT_FILE: AtomicU32 = AtomicU32::new(0);
+
     let user = current_user();
     let xml = task_xml(exe, &user);
 
     // schtasks reads task XML as UTF-16 with a BOM.
     let mut bytes = vec![0xFF, 0xFE];
     bytes.extend(xml.encode_utf16().flat_map(u16::to_le_bytes));
-    let xml_path = std::env::temp_dir().join("throttle-autostart.xml");
+    let xml_path = std::env::temp_dir().join(format!(
+        "throttle-autostart-{}-{}.xml",
+        std::process::id(),
+        NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+    ));
     std::fs::write(&xml_path, bytes).context("write task XML")?;
 
     let xml_arg = xml_path.to_string_lossy();
@@ -141,6 +159,21 @@ fn xml_escape(s: &str) -> String {
         .replace('\'', "&apos;")
 }
 
+fn xml_unescape(s: &str) -> String {
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
+}
+
+/// The unescaped `<Command>` of a task definition.
+fn parse_command(xml: &str) -> Option<String> {
+    let start = xml.find("<Command>")? + "<Command>".len();
+    let len = xml[start..].find("</Command>")?;
+    Some(xml_unescape(xml[start..start + len].trim()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,6 +187,14 @@ mod tests {
         assert!(xml.contains(r"<Command>C:\Tools &amp; Apps\Throttle\throttle.exe</Command>"));
         assert!(xml.contains(r"<WorkingDirectory>C:\Tools &amp; Apps\Throttle</WorkingDirectory>"));
         assert!(xml.contains(r"<UserId>PC\O&apos;Brien</UserId>"));
+    }
+
+    #[test]
+    fn command_round_trips_through_task_xml() {
+        let exe = r"C:\Tools & <Apps>\Throttle\throttle.exe";
+        let xml = task_xml(Path::new(exe), "me");
+        assert_eq!(parse_command(&xml).as_deref(), Some(exe));
+        assert_eq!(parse_command("<Task></Task>"), None);
     }
 
     #[test]
