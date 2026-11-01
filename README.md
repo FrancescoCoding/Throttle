@@ -36,6 +36,10 @@ https://github.com/user-attachments/assets/632312e7-4096-4957-b2f7-f2277aa96bb3
 - Right-click any process to set a download limit, set an upload limit, block,
   unblock, or remove its rule.
 - Rate editor uses a number field plus a unit dropdown (B/s, KB/s, MB/s, GB/s).
+- System tray icon, with optional minimise to tray, close to tray, start
+  minimised, and launch at Windows startup (Settings menu). Startup uses a
+  Task Scheduler logon task, since Windows skips Run-key entries that need
+  elevation.
 - Runs as a single elevated process; engine and GUI communicate over channels.
 
 ## Screenshots

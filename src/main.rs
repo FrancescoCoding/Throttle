@@ -10,9 +10,11 @@
     windows_subsystem = "windows"
 )]
 
+mod autostart;
 mod backend;
 mod gui;
 mod icon;
+mod settings;
 mod single_instance;
 mod types;
 mod update_check;
@@ -125,6 +127,14 @@ fn main() -> eframe::Result {
         return Ok(());
     }
 
+    let settings = settings::load();
+    // The startup task passes --tray; "Start minimised" covers manual launches.
+    // A relaunch after an in-app update (--wait-pid) always shows the window,
+    // so the user sees the update finish.
+    let relaunched_by_update = std::env::args().any(|a| a == "--wait-pid");
+    let start_hidden = !relaunched_by_update
+        && (std::env::args().any(|a| a == autostart::TRAY_FLAG) || settings.start_minimized);
+
     let app_icon = eframe::egui::IconData {
         rgba: icon::rgba(),
         width: icon::SIZE,
@@ -150,7 +160,15 @@ fn main() -> eframe::Result {
             let result = eframe::run_native(
                 "Throttle",
                 native_options,
-                Box::new(move |cc| Ok(Box::new(gui::ThrottleApp::new(cc, snapshot_rx, cmd_tx)))),
+                Box::new(move |cc| {
+                    Ok(Box::new(gui::ThrottleApp::new(
+                        cc,
+                        snapshot_rx,
+                        cmd_tx,
+                        settings,
+                        start_hidden,
+                    )))
+                }),
             );
             // The app sent `Command::Shutdown` on close (and dropping it dropped
             // the command sender). Wait for the aggregator to persist rules;
@@ -161,6 +179,9 @@ fn main() -> eframe::Result {
         Err(err) => {
             tracing::error!("backend failed to start: {err:#}");
             let message = format!("{err:#}");
+            // A second launch should raise the error window. It never hides to
+            // the tray, so raising it directly is safe.
+            single_instance::on_show_request(|| single_instance::focus_window("Throttle"));
             // Show the error in a minimal window instead of exiting silently.
             eframe::run_native(
                 "Throttle error",
