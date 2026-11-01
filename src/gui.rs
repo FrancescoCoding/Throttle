@@ -10,11 +10,15 @@ use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
 use eframe::egui::Widget;
 use egui_plot::{Legend, Line, Plot, PlotPoints};
+use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use crate::backend::rules;
 use crate::backend::synthetic::{is_shapable, is_system};
+use crate::settings::{self, Settings};
 use crate::types::{Command, ProcessStats, Rule, Snapshot};
 use crate::update_check::{self, UpdateInfo};
+use crate::{autostart, icon, single_instance};
 
 /// How many total-rate samples we keep for the header graph.
 const TOTAL_HISTORY_LEN: usize = 120;
@@ -191,10 +195,32 @@ pub struct ThrottleApp {
     about_open: bool,
     shutdown_sent: bool,
 
+    settings: Settings,
+    /// `None` until the background check of the startup task reports back.
+    autostart: Option<bool>,
+    autostart_rx: Receiver<bool>,
+    autostart_error: Option<String>,
+
+    /// `None` if the tray icon could not be created; the window then never hides.
+    tray: Option<TrayIcon>,
+    tray_rx: Receiver<TrayAction>,
+    /// The window is hidden to the tray (no taskbar button).
+    hidden: bool,
+    /// Hide to the tray on the first frame (`--tray` or "Start minimised").
+    start_hidden: bool,
+    /// A real exit is under way, so a close request must not go to the tray.
+    exiting: bool,
+
     update_rx: Receiver<UpdateInfo>,
     update: Option<UpdateInfo>,
     update_dismissed: bool,
     update_install: UpdateInstall,
+}
+
+/// What the tray icon (or a second launch) asks the app to do.
+enum TrayAction {
+    Show,
+    Exit,
 }
 
 /// Progress of an in-app update started from the banner.
@@ -206,10 +232,19 @@ enum UpdateInstall {
 
 impl ThrottleApp {
     pub fn new(
-        _cc: &eframe::CreationContext<'_>,
+        cc: &eframe::CreationContext<'_>,
         snapshot_rx: Receiver<Snapshot>,
         cmd_tx: Sender<Command>,
+        settings: Settings,
+        start_hidden: bool,
     ) -> Self {
+        let (tray_tx, tray_rx) = crossbeam_channel::unbounded();
+        let tray = create_tray(&cc.egui_ctx, tray_tx.clone());
+        let ctx = cc.egui_ctx.clone();
+        single_instance::on_show_request(move || {
+            let _ = tray_tx.send(TrayAction::Show);
+            ctx.request_repaint();
+        });
         Self {
             snapshot_rx,
             cmd_tx,
@@ -222,6 +257,15 @@ impl ThrottleApp {
             limit_modal: None,
             about_open: false,
             shutdown_sent: false,
+            settings,
+            autostart: None,
+            autostart_rx: spawn_autostart_check(),
+            autostart_error: None,
+            tray,
+            tray_rx,
+            hidden: false,
+            start_hidden,
+            exiting: false,
             update_rx: update_check::spawn(APP_VERSION),
             update: None,
             update_dismissed: false,
@@ -233,6 +277,53 @@ impl ThrottleApp {
         if !self.shutdown_sent {
             let _ = self.cmd_tx.send(Command::Shutdown);
             self.shutdown_sent = true;
+        }
+    }
+
+    /// Quit for real, even if "Close to tray" is on.
+    fn exit(&mut self, ctx: &egui::Context) {
+        self.exiting = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
+    fn hide_to_tray(&mut self, ctx: &egui::Context) {
+        // Without a tray icon there would be no way back to a hidden window.
+        if self.tray.is_some() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            self.hidden = true;
+        }
+    }
+
+    fn show_window(&mut self, ctx: &egui::Context) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        self.hidden = false;
+    }
+
+    fn save_settings(&self) {
+        if let Err(e) = settings::save(&self.settings) {
+            tracing::warn!("failed to persist settings: {e:#}");
+        }
+    }
+
+    fn set_autostart(&mut self, enabled: bool) {
+        let result = if enabled {
+            std::env::current_exe()
+                .map_err(anyhow::Error::from)
+                .and_then(|exe| autostart::enable(&exe))
+        } else {
+            autostart::disable()
+        };
+        match result {
+            Ok(()) => {
+                self.autostart = Some(enabled);
+                self.autostart_error = None;
+            }
+            Err(e) => {
+                tracing::warn!("failed to update the startup task: {e:#}");
+                self.autostart_error = Some(format!("Could not update the startup task: {e:#}"));
+            }
         }
     }
 
@@ -358,10 +449,11 @@ impl ThrottleApp {
                     }
                     ui.separator();
                     if ui.button("Exit").clicked() {
-                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        self.exit(ui.ctx());
                         ui.close();
                     }
                 });
+                ui.menu_button("Settings", |ui| self.draw_settings_menu(ui));
                 ui.menu_button("Help", |ui| {
                     if ui.button("Documentation").clicked() {
                         open_url(ui.ctx(), &format!("{REPO_URL}#readme"));
@@ -394,6 +486,45 @@ impl ThrottleApp {
         });
     }
 
+    fn draw_settings_menu(&mut self, ui: &mut egui::Ui) {
+        let mut changed = false;
+        ui.add_enabled_ui(self.tray.is_some(), |ui| {
+            changed |= ui
+                .checkbox(&mut self.settings.minimize_to_tray, "Minimise to tray")
+                .on_hover_text("Minimising hides Throttle to the tray instead of the taskbar.")
+                .changed();
+            changed |= ui
+                .checkbox(&mut self.settings.close_to_tray, "Close to tray")
+                .on_hover_text("The X button hides Throttle to the tray. File > Exit still quits.")
+                .changed();
+            changed |= ui
+                .checkbox(&mut self.settings.start_minimized, "Start minimised")
+                .on_hover_text("Open in the tray instead of a window.")
+                .changed();
+        })
+        .response
+        .on_disabled_hover_text("The system tray is unavailable.");
+        if changed {
+            self.save_settings();
+        }
+
+        ui.separator();
+        let mut autostart = self.autostart.unwrap_or(false);
+        let toggled = ui
+            .add_enabled(
+                self.autostart.is_some(),
+                egui::Checkbox::new(&mut autostart, "Launch at startup"),
+            )
+            .on_hover_text("Start Throttle in the tray when you sign in to Windows.")
+            .changed();
+        if toggled {
+            self.set_autostart(autostart);
+        }
+        if let Some(e) = &self.autostart_error {
+            ui.label(egui::RichText::new(e).small().color(COLOR_BLOCK));
+        }
+    }
+
     fn draw_update_banner(&mut self, ui: &mut egui::Ui) {
         if self.update_dismissed {
             return;
@@ -415,7 +546,7 @@ impl ThrottleApp {
             self.update_install = match relaunched {
                 Ok(_) => {
                     self.send_shutdown();
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                    self.exit(ui.ctx());
                     UpdateInstall::Idle
                 }
                 Err(e) => {
@@ -917,10 +1048,10 @@ impl ThrottleApp {
 }
 
 impl eframe::App for ThrottleApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let ctx = ui.ctx().clone();
-
-        // Drain any pending snapshots each frame.
+    /// Runs every frame, and also while the window is hidden to the tray, so
+    /// everything that must keep ticking in the background lives here.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Drain pending snapshots even while hidden: the channel is unbounded.
         let incoming: Vec<Snapshot> = self.snapshot_rx.try_iter().collect();
         for snap in incoming {
             self.total_down_hist.push(snap.total_down_rate as f64);
@@ -936,9 +1067,42 @@ impl eframe::App for ThrottleApp {
             self.last_snapshot = snap;
         }
 
-        // Window close -> tell the backend to shut down.
+        if std::mem::take(&mut self.start_hidden) {
+            self.hide_to_tray(ctx);
+        }
+
+        let actions: Vec<TrayAction> = self.tray_rx.try_iter().collect();
+        for action in actions {
+            match action {
+                TrayAction::Show => self.show_window(ctx),
+                TrayAction::Exit => self.exit(ctx),
+            }
+        }
+
+        let minimized = ctx.input(|i| i.viewport().minimized == Some(true));
+        if minimized && self.settings.minimize_to_tray && !self.hidden {
+            self.hide_to_tray(ctx);
+        }
+
+        // Window close: hide to the tray if asked to, else shut the backend down.
         if ctx.input(|i| i.viewport().close_requested()) {
-            self.send_shutdown();
+            if self.settings.close_to_tray && self.tray.is_some() && !self.exiting {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.hide_to_tray(ctx);
+            } else {
+                self.send_shutdown();
+            }
+        }
+
+        // Keep ticking (and draining snapshots) while hidden to the tray.
+        ctx.request_repaint_after(Duration::from_millis(500));
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+
+        if let Ok(enabled) = self.autostart_rx.try_recv() {
+            self.autostart = Some(enabled);
         }
 
         let snap = self.last_snapshot.clone();
@@ -961,8 +1125,6 @@ impl eframe::App for ThrottleApp {
         self.draw_table(ui, &snap);
         self.draw_limit_modal(&ctx);
         self.draw_about(&ctx);
-
-        ctx.request_repaint_after(Duration::from_millis(500));
     }
 }
 
@@ -970,6 +1132,89 @@ impl Drop for ThrottleApp {
     fn drop(&mut self) {
         self.send_shutdown();
     }
+}
+
+// ---------------------------------------------------------------------------
+// Tray and startup helpers
+// ---------------------------------------------------------------------------
+
+/// Create the tray icon: left click shows the window, right click opens a
+/// Show / Exit menu. Returns `None` (logged) if the shell refuses the icon,
+/// e.g. Explorer is not running yet.
+fn create_tray(ctx: &egui::Context, tx: Sender<TrayAction>) -> Option<TrayIcon> {
+    let show = MenuItem::new("Show Throttle", true, None);
+    let exit = MenuItem::new("Exit", true, None);
+    let menu = Menu::new();
+    if let Err(e) = menu.append_items(&[&show, &PredefinedMenuItem::separator(), &exit]) {
+        tracing::warn!("tray menu unavailable: {e}");
+        return None;
+    }
+
+    // Hovering fires Move/Enter/Leave constantly: only clicks wake the app.
+    let (click_tx, click_ctx) = (tx.clone(), ctx.clone());
+    TrayIconEvent::set_event_handler(Some(move |event| {
+        if let TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            ..
+        }
+        | TrayIconEvent::DoubleClick {
+            button: MouseButton::Left,
+            ..
+        } = event
+        {
+            let _ = click_tx.send(TrayAction::Show);
+            click_ctx.request_repaint();
+        }
+    }));
+    let (show_id, exit_id, ctx) = (show.id().clone(), exit.id().clone(), ctx.clone());
+    MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+        let action = if event.id == show_id {
+            TrayAction::Show
+        } else if event.id == exit_id {
+            TrayAction::Exit
+        } else {
+            return;
+        };
+        let _ = tx.send(action);
+        ctx.request_repaint();
+    }));
+
+    let built = Icon::from_rgba(icon::rgba(), icon::SIZE, icon::SIZE)
+        .map_err(|e| e.to_string())
+        .and_then(|icon| {
+            TrayIconBuilder::new()
+                .with_icon(icon)
+                .with_tooltip("Throttle")
+                .with_menu(Box::new(menu))
+                .with_menu_on_left_click(false)
+                .build()
+                .map_err(|e| e.to_string())
+        });
+    match built {
+        Ok(tray) => Some(tray),
+        Err(e) => {
+            tracing::warn!("tray icon unavailable: {e}");
+            None
+        }
+    }
+}
+
+/// Check the startup task off the UI thread (`schtasks` takes a moment). An
+/// existing task is re-pointed at this exe, in case Throttle was moved.
+fn spawn_autostart_check() -> Receiver<bool> {
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    std::thread::spawn(move || {
+        let enabled = autostart::is_enabled();
+        if enabled
+            && let Ok(exe) = std::env::current_exe()
+            && let Err(e) = autostart::enable(&exe)
+        {
+            tracing::warn!("failed to refresh the startup task: {e:#}");
+        }
+        let _ = tx.send(enabled);
+    });
+    rx
 }
 
 // ---------------------------------------------------------------------------

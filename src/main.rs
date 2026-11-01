@@ -10,9 +10,11 @@
     windows_subsystem = "windows"
 )]
 
+mod autostart;
 mod backend;
 mod gui;
 mod icon;
+mod settings;
 mod single_instance;
 mod types;
 mod update_check;
@@ -125,6 +127,11 @@ fn main() -> eframe::Result {
         return Ok(());
     }
 
+    let settings = settings::load();
+    // The startup task passes --tray; "Start minimised" covers manual launches.
+    let start_hidden =
+        std::env::args().any(|a| a == autostart::TRAY_FLAG) || settings.start_minimized;
+
     let app_icon = eframe::egui::IconData {
         rgba: icon::rgba(),
         width: icon::SIZE,
@@ -150,7 +157,15 @@ fn main() -> eframe::Result {
             let result = eframe::run_native(
                 "Throttle",
                 native_options,
-                Box::new(move |cc| Ok(Box::new(gui::ThrottleApp::new(cc, snapshot_rx, cmd_tx)))),
+                Box::new(move |cc| {
+                    Ok(Box::new(gui::ThrottleApp::new(
+                        cc,
+                        snapshot_rx,
+                        cmd_tx,
+                        settings,
+                        start_hidden,
+                    )))
+                }),
             );
             // The app sent `Command::Shutdown` on close (and dropping it dropped
             // the command sender). Wait for the aggregator to persist rules;
