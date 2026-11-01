@@ -1,6 +1,6 @@
 [package]
 name = "throttle"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 description = "A free, open-source per-process bandwidth monitor and limiter for Windows"
 repository = "https://github.com/FrancescoCoding/Throttle"
