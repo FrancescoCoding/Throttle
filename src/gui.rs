@@ -1201,12 +1201,15 @@ fn create_tray(ctx: &egui::Context, tx: Sender<TrayAction>) -> Option<TrayIcon> 
 }
 
 /// Check the startup task off the UI thread (`schtasks` takes a moment). An
-/// existing task is re-pointed at this exe, in case Throttle was moved.
+/// existing task is re-pointed at this exe, in case Throttle was moved (not
+/// needed when the task itself launched us).
 fn spawn_autostart_check() -> Receiver<bool> {
     let (tx, rx) = crossbeam_channel::bounded(1);
+    let launched_by_task = std::env::args().any(|a| a == autostart::TRAY_FLAG);
     std::thread::spawn(move || {
         let enabled = autostart::is_enabled();
         if enabled
+            && !launched_by_task
             && let Ok(exe) = std::env::current_exe()
             && let Err(e) = autostart::enable(&exe)
         {
