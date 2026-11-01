@@ -206,6 +206,8 @@ pub struct ThrottleApp {
     tray_rx: Receiver<TrayAction>,
     /// The window is hidden to the tray (no taskbar button).
     hidden: bool,
+    /// Whether the window was minimised last frame, to catch the moment it is.
+    was_minimized: bool,
     /// Hide to the tray on the first frame (`--tray` or "Start minimised").
     start_hidden: bool,
     /// A real exit is under way, so a close request must not go to the tray.
@@ -264,6 +266,7 @@ impl ThrottleApp {
             tray,
             tray_rx,
             hidden: false,
+            was_minimized: false,
             start_hidden,
             exiting: false,
             update_rx: update_check::spawn(APP_VERSION),
@@ -1079,10 +1082,14 @@ impl eframe::App for ThrottleApp {
             }
         }
 
+        // Hide when the window becomes minimised, not while it stays so: just
+        // after a restore from the tray it still reads as minimised for a frame,
+        // and hiding then would take a second click to bring it back.
         let minimized = ctx.input(|i| i.viewport().minimized == Some(true));
-        if minimized && self.settings.minimize_to_tray && !self.hidden {
+        if minimized && !self.was_minimized && self.settings.minimize_to_tray && !self.hidden {
             self.hide_to_tray(ctx);
         }
+        self.was_minimized = minimized;
 
         // Window close: hide to the tray if asked to, else shut the backend down.
         if ctx.input(|i| i.viewport().close_requested()) {
