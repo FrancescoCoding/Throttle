@@ -42,7 +42,8 @@ pub fn load() -> HashMap<String, Rule> {
         }
     };
 
-    match serde_json::from_str::<HashMap<String, Rule>>(&data) {
+    // A UTF-8 byte order mark from an editor must not empty the rule set.
+    match serde_json::from_str::<HashMap<String, Rule>>(data.trim_start_matches('\u{feff}')) {
         Ok(mut map) => {
             // Defensively normalise keys to lowercase so lookups from the engine
             // (which always lowercases) match regardless of how the file was written.
@@ -89,6 +90,7 @@ mod tests {
                 down_limit: Some(2 * 1024 * 1024),
                 up_limit: None,
                 blocked: false,
+                disabled: false,
             },
         );
         rules.insert(
@@ -98,6 +100,7 @@ mod tests {
                 down_limit: None,
                 up_limit: Some(512 * 1024),
                 blocked: true,
+                disabled: true,
             },
         );
 
@@ -121,5 +124,6 @@ mod tests {
         assert!(r.down_limit.is_none());
         assert!(r.up_limit.is_none());
         assert!(!r.blocked);
+        assert!(!r.disabled);
     }
 }

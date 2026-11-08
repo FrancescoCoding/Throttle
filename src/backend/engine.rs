@@ -275,11 +275,13 @@ fn handle_packet(
     }
 
     // Look up the rule (cloned so we don't hold the rules lock). The "Unknown"
-    // row is never shaped: see `synthetic::is_shapable`.
+    // row is never shaped: see `synthetic::is_shapable`. A disabled rule is
+    // listed but not applied, so it counts as no rule here.
     let rule = exe
         .as_ref()
         .filter(|e| synthetic::is_shapable(e))
-        .and_then(|e| shared.rules.lock().unwrap().get(e).cloned());
+        .and_then(|e| shared.rules.lock().unwrap().get(e).cloned())
+        .filter(|r| !r.disabled);
 
     match rule {
         // No process match, or no rule: pass through untouched.

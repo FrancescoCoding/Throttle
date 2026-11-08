@@ -218,11 +218,21 @@ fn run_aggregator(shared: Arc<Shared>, cmd_rx: Receiver<Command>, snapshot_tx: S
                     Ok(Command::SetRule(mut rule)) => {
                         rule.exe_path = rule.exe_path.to_lowercase();
                         let key = rule.exe_path.clone();
+                        let disabled = rule.disabled;
                         let snapshot = {
                             let mut rules = shared.rules.lock().unwrap();
-                            rules.insert(key, rule);
+                            rules.insert(key.clone(), rule);
                             rules.clone()
                         };
+                        // A disabled rule must stop shaping at once: drop its
+                        // buckets so held packets are released, as for a removal.
+                        if disabled {
+                            shared
+                                .buckets
+                                .lock()
+                                .unwrap()
+                                .retain(|(exe, _), _| exe != &key);
+                        }
                         if let Err(e) = rules::save(&snapshot) {
                             tracing::warn!("failed to persist rules: {e}");
                         }
