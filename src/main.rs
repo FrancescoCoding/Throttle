@@ -144,10 +144,14 @@ fn main() -> eframe::Result {
     };
     let native_options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([1100.0, 720.0])
+            .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([720.0, 480.0])
             .with_icon(app_icon)
             .with_title("Throttle"),
+        // With the `persistence` feature eframe keeps the window size and
+        // position (clamped to the monitors present) in `%APPDATA%\Throttle\data`.
+        // The app opts out of saving egui's other state (see
+        // `ThrottleApp::persist_egui_memory`): the layout lives in settings.json.
         ..Default::default()
     };
 

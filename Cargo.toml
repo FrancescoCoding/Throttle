@@ -9,7 +9,7 @@ license = "MIT"
 [dependencies]
 anyhow = "1.0.103"
 crossbeam-channel = "0.5.16"
-eframe = "0.36.2"
+eframe = { version = "0.36.2", features = ["persistence"] }
 egui_extras = "0.36.2"
 egui_plot = "0.37.0"
 serde = { version = "1.0.228", features = ["derive"] }
@@ -17,6 +17,7 @@ serde_json = "1.0.150"
 sha2 = "0.10"
 tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
+rfd = { version = "0.18", default-features = false }
 tray-icon = { version = "0.26.1", default-features = false }
 ureq = "3"
 windivert = "0.6.0"
