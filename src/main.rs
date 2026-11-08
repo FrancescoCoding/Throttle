@@ -10,12 +10,14 @@
     windows_subsystem = "windows"
 )]
 
+mod appearance;
 mod autostart;
 mod backend;
 mod gui;
 mod icon;
 mod settings;
 mod single_instance;
+mod theme;
 mod types;
 mod update_check;
 
