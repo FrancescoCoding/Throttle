@@ -8,7 +8,7 @@
 /// Icon edge length in pixels.
 pub const SIZE: u32 = 64;
 
-// Palette (matches gui.rs COLOR_DOWN / COLOR_UP and the dark panel background).
+// Palette (matches theme::Accents::DEFAULT down / up and the dark panel background).
 const BG: [u8; 3] = [0x1e, 0x24, 0x30];
 const BG_EDGE: [u8; 3] = [0x2b, 0x33, 0x42];
 const DOWN: [u8; 3] = [0x4c, 0xc2, 0x5c]; // green
@@ -16,6 +16,12 @@ const UP: [u8; 3] = [0x4a, 0x9e, 0xff]; // blue
 
 /// Generate the icon as `SIZE x SIZE` RGBA8 pixels (row-major, top-left origin).
 pub fn rgba() -> Vec<u8> {
+    rgba_with(DOWN, UP)
+}
+
+/// Icon pixels with custom `down` and `up` arrow colours, for a tray icon
+/// that follows the active theme accents.
+pub fn rgba_with(down: [u8; 3], up: [u8; 3]) -> Vec<u8> {
     let s = SIZE as f32;
     let mut px = vec![0u8; (SIZE * SIZE * 4) as usize];
 
@@ -41,9 +47,9 @@ pub fn rgba() -> Vec<u8> {
             // Left glyph: download arrow (points down). Right glyph: upload
             // arrow (points up). Each occupies its half of the badge.
             if in_arrow(fx, fy, cx_left, s, true) {
-                rgb = DOWN;
+                rgb = down;
             } else if in_arrow(fx, fy, cx_right, s, false) {
-                rgb = UP;
+                rgb = up;
             }
 
             let idx = ((y * SIZE + x) * 4) as usize;
@@ -161,4 +167,26 @@ pub fn ico_bytes() -> Vec<u8> {
     // AND mask: fully opaque (alpha already carries transparency).
     ico.extend(std::iter::repeat_n(0u8, h * and_stride));
     ico
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_colours_keep_the_stock_icon() {
+        assert_eq!(rgba(), rgba_with(DOWN, UP));
+        assert_eq!(rgba().len(), (SIZE * SIZE * 4) as usize);
+    }
+
+    #[test]
+    fn custom_colours_change_the_arrows() {
+        let custom = rgba_with([255, 0, 0], [0, 0, 255]);
+        assert_ne!(custom, rgba());
+        // The badge outline (alpha) is unchanged; only arrow pixels differ.
+        let stock = rgba();
+        for (a, b) in custom.chunks(4).zip(stock.chunks(4)) {
+            assert_eq!(a[3], b[3]);
+        }
+    }
 }

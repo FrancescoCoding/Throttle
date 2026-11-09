@@ -3,6 +3,7 @@
 ![platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078D6)
 ![rust](https://img.shields.io/badge/built%20with-Rust-orange)
 ![rust](https://img.shields.io/github/downloads/FrancescoCoding/Throttle/total)
+[![buy me a coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-ffdd00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/franwbu)
 
 
 A free, open-source **NetLimiter-style bandwidth monitor and limiter for Windows**,
@@ -40,13 +41,37 @@ https://github.com/user-attachments/assets/632312e7-4096-4957-b2f7-f2277aa96bb3
   minimised, and launch at Windows startup (Settings menu). Startup uses a
   Task Scheduler logon task, since Windows skips Run-key entries that need
   elevation.
+- Optional colour themes (Themes menu): editor and community palettes, import
+  of any editor colour theme JSON, Customise (corners, density, scale, fonts,
+  accents) and View (columns, plot, always on top, compact). Stock by default.
+- Filter box above the table (Ctrl+F) and an Active chip that hides idle
+  processes. The window size and position, panel
+  sizes, column widths and sort order are remembered across restarts.
+- Plot navigation: scroll zooms the time axis, drag pans it, double click
+  resets the view.
+- Rules can be switched off and back on without losing them, from the
+  right-click menu or the tray menu, which lists every rule with a check
+  mark. The tray tooltip shows the live download and upload totals.
 - Runs as a single elevated process; engine and GUI communicate over channels.
 
 ## Screenshots
 
-<img width="818" height="452" alt="Throttle demo" src="https://github.com/user-attachments/assets/eeeb9d21-e78f-4832-ae14-7dddc8e905c7" />
+Live rates per process, with the selected process on the right and a button
+that opens its folder:
 
-<img width="818" height="452" alt="Throttle download limit" src="https://github.com/user-attachments/assets/8b2238fb-3dc5-4fba-bf9e-c32c1ff3367e" />
+<img width="818" alt="Throttle main window" src="docs/screenshots/overview.png" />
+
+The Themes menu, with editor and community palettes:
+
+<img width="818" alt="Themes menu" src="docs/screenshots/themes.png" />
+
+Customise: corners, density, scale, fonts and accents:
+
+<img width="818" alt="Customise window" src="docs/screenshots/customise.png" />
+
+The filter box and the Active chip narrow the table to what matters:
+
+<img width="818" alt="Filtered process table" src="docs/screenshots/filter.png" />
 
 ## Download
 
@@ -114,6 +139,13 @@ internet, so Throttle shows the browser's traffic under the proxy's process
 (such as `nordsec-threatprotection-service`) and a limit set on the browser
 itself has no effect; set it on the proxy process instead. Throttle does not
 capture loopback traffic, so the interception itself keeps working.
+
+## Support
+
+Throttle is free, with no ads and no telemetry, and is built in my spare time.
+If it saved you some frustration, you can
+[buy me a coffee](https://buymeacoffee.com/franwbu). Stars, bug reports and
+pull requests are just as welcome.
 
 ## License
 

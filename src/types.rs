@@ -17,6 +17,10 @@ pub struct Rule {
     pub up_limit: Option<u64>,
     /// If true, all traffic for this process is dropped.
     pub blocked: bool,
+    /// The rule is switched off: kept in the list but not applied. Missing in
+    /// files from older builds, so it defaults to active.
+    #[serde(default)]
+    pub disabled: bool,
 }
 
 /// Live stats for one process, sent to the GUI once per second.
