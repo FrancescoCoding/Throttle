@@ -2,11 +2,23 @@ name: CI
 
 # Pushes to a branch with an open pull request would run every job twice,
 # once for the push and once for the pull request, so pushes only count on
-# main; the pull request run covers every other branch.
+# main; the pull request run covers every other branch. Only changes that
+# can affect the build run the jobs: documentation and screenshots do not.
 on:
   push:
     branches: [main]
+    paths: &build_paths
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "build.rs"
+      - "throttle.exe.manifest"
+      - "assets/**"
+      - "vendor/**"
+      - ".cargo/**"
+      - ".github/workflows/ci.yml"
   pull_request:
+    paths: *build_paths
 
 env:
   CARGO_TERM_COLOR: always
