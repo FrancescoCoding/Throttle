@@ -27,7 +27,7 @@ Traffic interception uses [WinDivert](https://reqrypt.org/windivert.html), a
 signed, well-established user-mode packet-diversion driver, so Throttle does not
 need its own kernel driver.
 
-https://github.com/user-attachments/assets/632312e7-4096-4957-b2f7-f2277aa96bb3
+https://github.com/user-attachments/assets/9413bec4-a48a-41c2-9e75-7e6207d80d4f
 
 ## Features
 
