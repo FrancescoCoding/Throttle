@@ -54,6 +54,15 @@ https://github.com/user-attachments/assets/9413bec4-a48a-41c2-9e75-7e6207d80d4f
   mark. The tray tooltip shows the live download and upload totals.
 - Runs as a single elevated process; engine and GUI communicate over channels.
 
+## Download
+
+Prebuilt Windows binaries are available on the
+[Releases page](https://github.com/FrancescoCoding/Throttle/releases).
+Grab the latest `Throttle-vX.Y.Z-windows-x64.zip`, extract it anywhere, and run
+`throttle.exe`. The WinDivert driver files are included in the zip, so no extra
+setup is needed. Windows will show a UAC prompt because the app needs
+administrator rights (see below).
+
 ## Screenshots
 
 Live rates per process, with the selected process on the right and a button
@@ -72,15 +81,6 @@ Customise: corners, density, scale, fonts and accents:
 The filter box and the Active chip narrow the table to what matters:
 
 <img width="818" alt="Filtered process table" src="docs/screenshots/filter.png" />
-
-## Download
-
-Prebuilt Windows binaries are available on the
-[Releases page](https://github.com/FrancescoCoding/Throttle/releases).
-Grab the latest `Throttle-vX.Y.Z-windows-x64.zip`, extract it anywhere, and run
-`throttle.exe`. The WinDivert driver files are included in the zip, so no extra
-setup is needed. Windows will show a UAC prompt because the app needs
-administrator rights (see below).
 
 ## Building
 
