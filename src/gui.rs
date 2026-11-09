@@ -6,26 +6,25 @@
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::plot::{self, PlotHint};
 use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
 use eframe::egui::Widget;
-use egui_plot::{Legend, Line, Plot, PlotPoints};
-use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
+use tray_icon::{Icon, TrayIcon};
+
+use crate::tray::{self, TrayAction, TrayRule};
 
 use crate::backend::rules;
 use crate::backend::synthetic::{is_shapable, is_system};
 use crate::settings::{self, Settings, SortColumn, View};
 use crate::types::{Command, ProcessStats, Rule, Snapshot};
+use crate::units::{GB, KB, MB, humanize_bytes, humanize_rate, settle};
 use crate::update_check::{self, UpdateInfo};
 use crate::{appearance, autostart, icon, single_instance, theme};
 
 /// How many total-rate samples we keep for the header graph by default; the
 /// View menu changes it through `View::history_secs`.
 const TOTAL_HISTORY_LEN: usize = 120;
-
-/// Fill opacity under the plot lines when "Filled area" is on.
-const PLOT_FILL_ALPHA: f32 = 0.15;
 
 /// Header plot history choices in the View menu: `(seconds, label)`.
 const HISTORY_CHOICES: [(usize, &str); 4] = [
@@ -52,52 +51,9 @@ const START_HIDDEN_WAIT: Duration = Duration::from_secs(60);
 /// Width reserved for the folder button in the detail panel header.
 const FOLDER_BUTTON_WIDTH: f32 = 44.0;
 
-/// Ids of the fixed tray menu entries; rule entries use `TRAY_RULE_PREFIX`.
-const TRAY_SHOW_ID: &str = "show";
-const TRAY_EXIT_ID: &str = "exit";
-/// Tray menu id prefix for a rule toggle; the rest is the rule's exe key.
-const TRAY_RULE_PREFIX: &str = "rule:";
-/// Most rule toggles the tray menu lists before it points to the window.
-const TRAY_RULE_LIMIT: usize = 15;
-
 // ---------------------------------------------------------------------------
 // Formatting / parsing helpers
 // ---------------------------------------------------------------------------
-
-const KB: f64 = 1024.0;
-const MB: f64 = 1024.0 * 1024.0;
-const GB: f64 = 1024.0 * 1024.0 * 1024.0;
-const TB: f64 = 1024.0 * 1024.0 * 1024.0 * 1024.0;
-
-/// Humanize a byte-per-second rate using base-1024 units.
-fn humanize_rate(bps: u64) -> String {
-    let b = bps as f64;
-    if b >= GB {
-        format!("{:.2} GB/s", b / GB)
-    } else if b >= MB {
-        format!("{:.2} MB/s", b / MB)
-    } else if b >= KB {
-        format!("{:.1} KB/s", b / KB)
-    } else {
-        format!("{bps} B/s")
-    }
-}
-
-/// Humanize a plain byte total using base-1024 units.
-fn humanize_bytes(bytes: u64) -> String {
-    let b = bytes as f64;
-    if b >= TB {
-        format!("{:.2} TB", b / TB)
-    } else if b >= GB {
-        format!("{:.2} GB", b / GB)
-    } else if b >= MB {
-        format!("{:.2} MB", b / MB)
-    } else if b >= KB {
-        format!("{:.1} KB", b / KB)
-    } else {
-        format!("{bytes} B")
-    }
-}
 
 /// Rate unit for the limit dialog's dropdown (base 1024).
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -167,7 +123,7 @@ fn numeric_input(text: &str) -> String {
 
 /// One-line summary of a rule for the table column. A disabled rule reads
 /// "Off: " plus what it would do when switched back on.
-fn rule_summary(rule: Option<&Rule>) -> String {
+pub(crate) fn rule_summary(rule: Option<&Rule>) -> String {
     let Some(r) = rule else {
         return "-".to_string();
     };
@@ -376,25 +332,6 @@ pub struct ThrottleApp {
     update_install: UpdateInstall,
 }
 
-/// What the tray icon (or a second launch) asks the app to do.
-enum TrayAction {
-    Show,
-    Exit,
-    /// Switch the rule with this exe key off, or back on.
-    ToggleRule(String),
-}
-
-/// One rule toggle in the tray menu.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct TrayRule {
-    /// Lowercase exe path, the rule's key.
-    key: String,
-    /// Process name and what the rule does.
-    label: String,
-    /// The rule is active (the entry shows a check mark).
-    active: bool,
-}
-
 /// Progress of an in-app update started from the banner.
 enum UpdateInstall {
     Idle,
@@ -413,7 +350,7 @@ impl ThrottleApp {
         let (tray_tx, tray_rx) = crossbeam_channel::unbounded();
         // The tray starts with the stock icon; `restyle` below recolours it
         // when the theme's accents differ from the stock ones.
-        let tray = create_tray(&cc.egui_ctx, tray_tx.clone());
+        let tray = tray::create_tray(&cc.egui_ctx, tray_tx.clone());
         let ctx = cc.egui_ctx.clone();
         single_instance::on_show_request(move || {
             let _ = tray_tx.send(TrayAction::Show);
@@ -488,7 +425,7 @@ impl ThrottleApp {
         let Some(tray) = &self.tray else {
             return;
         };
-        let result = Icon::from_rgba(tray_icon_rgba(self.accents), icon::SIZE, icon::SIZE)
+        let result = Icon::from_rgba(tray::icon_rgba(self.accents), icon::SIZE, icon::SIZE)
             .map_err(|e| e.to_string())
             .and_then(|icon| tray.set_icon(Some(icon)).map_err(|e| e.to_string()));
         if let Err(e) = result {
@@ -504,11 +441,7 @@ impl ThrottleApp {
             return;
         };
         let snap = &self.last_snapshot;
-        let tooltip = format!(
-            "Throttle\nDown {}\nUp {}",
-            humanize_rate(snap.total_down_rate),
-            humanize_rate(snap.total_up_rate)
-        );
+        let tooltip = tray::tooltip(snap);
         if tooltip != self.tray_tooltip {
             if let Err(e) = tray.set_tooltip(Some(&tooltip)) {
                 tracing::warn!("failed to update the tray tooltip: {e}");
@@ -516,9 +449,9 @@ impl ThrottleApp {
             self.tray_tooltip = tooltip;
         }
 
-        let rules = tray_rules(snap);
+        let rules = tray::rules(snap);
         if rules != self.tray_rules {
-            tray.set_menu(Some(Box::new(tray_menu(&rules))));
+            tray.set_menu(Some(Box::new(tray::menu(&rules))));
             self.tray_rules = rules;
             ctx.request_repaint();
         }
@@ -1271,29 +1204,23 @@ impl ThrottleApp {
                 // with the drag target each frame, which egui persists as the new
                 // panel size and turns into a resize feedback loop. Filling avoids
                 // that.
-                let plot = Plot::new("total_plot")
-                    .show_x(false)
-                    .y_axis_formatter(rate_axis_label)
-                    .y_grid_spacer(rate_grid)
-                    .allow_scroll(false)
-                    .allow_zoom([true, false])
-                    .allow_boxed_zoom(false)
-                    .allow_drag([true, false])
-                    .legend(Legend::default())
-                    .include_y(0.0)
-                    .include_y(1.0)
-                    .show(ui, |pui| {
-                        let view = &self.settings.view;
-                        pui.line(plot_line(
-                            view,
-                            "Down",
-                            &self.total_down_hist,
-                            self.accents.down,
-                        ));
-                        pui.line(plot_line(view, "Up", &self.total_up_hist, self.accents.up));
-                        plot_navigation(pui);
-                        pui.auto_bounds()
-                    });
+                let plot = plot::rate_plot("total_plot").show(ui, |pui| {
+                    let view = &self.settings.view;
+                    pui.line(plot::plot_line(
+                        view,
+                        "Down",
+                        &self.total_down_hist,
+                        self.accents.down,
+                    ));
+                    pui.line(plot::plot_line(
+                        view,
+                        "Up",
+                        &self.total_up_hist,
+                        self.accents.up,
+                    ));
+                    plot::plot_navigation(pui);
+                    pui.auto_bounds()
+                });
                 self.total_plot_hint = PlotHint::from(&plot);
             });
     }
@@ -1370,23 +1297,13 @@ impl ThrottleApp {
 
                 let down: Vec<f64> = stats.down_history.iter().map(|&v| v as f64).collect();
                 let up: Vec<f64> = stats.up_history.iter().map(|&v| v as f64).collect();
-                let plot = Plot::new("detail_plot")
+                let plot = plot::rate_plot("detail_plot")
                     .height(160.0)
-                    .show_x(false)
-                    .y_axis_formatter(rate_axis_label)
-                    .y_grid_spacer(rate_grid)
-                    .allow_scroll(false)
-                    .allow_zoom([true, false])
-                    .allow_boxed_zoom(false)
-                    .allow_drag([true, false])
-                    .legend(Legend::default())
-                    .include_y(0.0)
-                    .include_y(1.0)
                     .show(ui, |pui| {
                         let view = &self.settings.view;
-                        pui.line(plot_line(view, "Down", &down, self.accents.down));
-                        pui.line(plot_line(view, "Up", &up, self.accents.up));
-                        plot_navigation(pui);
+                        pui.line(plot::plot_line(view, "Down", &down, self.accents.down));
+                        pui.line(plot::plot_line(view, "Up", &up, self.accents.up));
+                        plot::plot_navigation(pui);
                         pui.auto_bounds()
                     });
                 self.detail_plot_hint = PlotHint::from(&plot);
@@ -1607,12 +1524,8 @@ impl ThrottleApp {
             (&mut self.settings.panels.plot_height, plot_height),
             (&mut self.settings.panels.detail_width, detail_width),
         ] {
-            let Some(seen) = seen.filter(|v| v.is_finite() && *v > 0.0) else {
-                continue;
-            };
-            let seen = (seen * 2.0).round() / 2.0;
-            if saved.is_none_or(|v| (v - seen).abs() >= 0.5) {
-                *saved = Some(seen);
+            if let Some(v) = seen.and_then(|seen| settle(*saved, seen)) {
+                *saved = Some(v);
                 changed = true;
             }
         }
@@ -1633,14 +1546,7 @@ impl ThrottleApp {
         let mut changed = false;
         let last = columns.len() - 1;
         for (i, (column, &width)) in columns.iter().zip(widths).enumerate() {
-            if !width.is_finite() || width <= 0.0 {
-                continue;
-            }
-            let width = (width * 2.0).round() / 2.0;
-            if saved
-                .get(column.id())
-                .is_none_or(|w| (w - width).abs() >= 0.5)
-            {
+            if let Some(width) = settle(saved.get(column.id()).copied(), width) {
                 let first_time = saved.insert(column.id().to_string(), width).is_none();
                 changed |= i != last || first_time;
             }
@@ -1908,7 +1814,7 @@ impl eframe::App for ThrottleApp {
         // it rather than hide with no icon to click; give up and stay visible if
         // it takes too long.
         if let Some(deadline) = self.start_hidden {
-            if taskbar_ready() {
+            if tray::taskbar_ready() {
                 self.start_hidden = None;
                 self.hide_to_tray(ctx);
             } else if Instant::now() >= deadline {
@@ -2017,155 +1923,8 @@ impl Drop for ThrottleApp {
 }
 
 // ---------------------------------------------------------------------------
-// Tray and startup helpers
+// Startup helpers
 // ---------------------------------------------------------------------------
-
-/// Create the tray icon: left click shows the window, right click opens a
-/// Show / Exit menu. Returns `None` (logged) if it cannot be created. If the
-/// taskbar does not exist yet, tray-icon still succeeds and adds the icon when
-/// Explorer announces the taskbar (see `taskbar_ready`).
-fn create_tray(ctx: &egui::Context, tx: Sender<TrayAction>) -> Option<TrayIcon> {
-    let menu = tray_menu(&[]);
-
-    // Hovering fires Move/Enter/Leave constantly: only clicks wake the app.
-    let (click_tx, click_ctx) = (tx.clone(), ctx.clone());
-    TrayIconEvent::set_event_handler(Some(move |event| {
-        if let TrayIconEvent::Click {
-            button: MouseButton::Left,
-            button_state: MouseButtonState::Up,
-            ..
-        }
-        | TrayIconEvent::DoubleClick {
-            button: MouseButton::Left,
-            ..
-        } = event
-        {
-            let _ = click_tx.send(TrayAction::Show);
-            click_ctx.request_repaint();
-        }
-    }));
-    // Entries are known by their string ids, so the menu can be rebuilt
-    // without touching this handler.
-    let ctx = ctx.clone();
-    MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-        let id = event.id.0.as_str();
-        let action = if id == TRAY_SHOW_ID {
-            TrayAction::Show
-        } else if id == TRAY_EXIT_ID {
-            TrayAction::Exit
-        } else if let Some(key) = id.strip_prefix(TRAY_RULE_PREFIX) {
-            TrayAction::ToggleRule(key.to_string())
-        } else {
-            return;
-        };
-        let _ = tx.send(action);
-        ctx.request_repaint();
-    }));
-
-    let built = Icon::from_rgba(icon::rgba(), icon::SIZE, icon::SIZE)
-        .map_err(|e| e.to_string())
-        .and_then(|icon| {
-            TrayIconBuilder::new()
-                .with_icon(icon)
-                .with_tooltip("Throttle")
-                .with_menu(Box::new(menu))
-                .with_menu_on_left_click(false)
-                .build()
-                .map_err(|e| e.to_string())
-        });
-    match built {
-        Ok(tray) => Some(tray),
-        Err(e) => {
-            tracing::warn!("tray icon unavailable: {e}");
-            None
-        }
-    }
-}
-
-/// The tray menu: Show, one check entry per rule (checked while the rule is
-/// active; clicking switches it off or on), Exit. With no rules the menu is
-/// the two entries it always had.
-fn tray_menu(rules: &[TrayRule]) -> Menu {
-    let menu = Menu::new();
-    let show = MenuItem::with_id(TRAY_SHOW_ID, "Show Throttle", true, None);
-    let exit = MenuItem::with_id(TRAY_EXIT_ID, "Exit", true, None);
-    let mut result = menu.append_items(&[&show, &PredefinedMenuItem::separator()]);
-    if !rules.is_empty() {
-        for rule in rules.iter().take(TRAY_RULE_LIMIT) {
-            let id = format!("{TRAY_RULE_PREFIX}{}", rule.key);
-            let item = CheckMenuItem::with_id(id, &rule.label, true, rule.active, None);
-            result = result.and(menu.append(&item));
-        }
-        if rules.len() > TRAY_RULE_LIMIT {
-            let more = rules.len() - TRAY_RULE_LIMIT;
-            let note = MenuItem::new(format!("{more} more in the window"), false, None);
-            result = result.and(menu.append(&note));
-        }
-        result = result.and(menu.append(&PredefinedMenuItem::separator()));
-    }
-    result = result.and(menu.append(&exit));
-    if let Err(e) = result {
-        tracing::warn!("tray menu incomplete: {e}");
-    }
-    menu
-}
-
-/// The rule toggles for the tray menu, by process name. A rule whose
-/// process is not running is named after its executable; one that neither
-/// limits nor blocks has nothing to switch and is left out.
-fn tray_rules(snap: &Snapshot) -> Vec<TrayRule> {
-    let mut rules: Vec<TrayRule> = snap
-        .rules
-        .values()
-        .filter(|r| r.blocked || r.down_limit.is_some() || r.up_limit.is_some())
-        .map(|rule| {
-            let name = snap
-                .processes
-                .get(&rule.exe_path)
-                .map(|p| p.name.clone())
-                .unwrap_or_else(|| exe_name(&rule.exe_path));
-            let mut active = rule.clone();
-            active.disabled = false;
-            TrayRule {
-                key: rule.exe_path.clone(),
-                label: format!("{name}: {}", rule_summary(Some(&active))),
-                active: !rule.disabled,
-            }
-        })
-        .collect();
-    rules.sort_by_key(|r| r.label.to_lowercase());
-    rules
-}
-
-/// The file name of an exe path, or the path itself if it has none.
-fn exe_name(path: &str) -> String {
-    std::path::Path::new(path)
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| path.to_string())
-}
-
-/// Tray icon pixels for `accents`. The stock accents keep the stock icon,
-/// whose arrow colours predate the theme accents, so the default look is
-/// unchanged.
-fn tray_icon_rgba(accents: theme::Accents) -> Vec<u8> {
-    let stock = theme::Accents::DEFAULT;
-    if (accents.down, accents.up) == (stock.down, stock.up) {
-        icon::rgba()
-    } else {
-        let rgb = |c: egui::Color32| [c.r(), c.g(), c.b()];
-        icon::rgba_with(rgb(accents.down), rgb(accents.up))
-    }
-}
-
-/// Whether Explorer's taskbar (and so the notification area) exists.
-fn taskbar_ready() -> bool {
-    use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
-    use windows::core::w;
-    // SAFETY: FindWindowW with a valid static class name; a miss is an error.
-    unsafe { FindWindowW(w!("Shell_TrayWnd"), None) }.is_ok_and(|h| !h.is_invalid())
-}
 
 /// Check the startup task off the UI thread (`schtasks` takes a moment). The
 /// task is re-pointed at this exe only if the exe it starts no longer exists
@@ -2210,169 +1969,6 @@ fn draw_swatch(ui: &mut egui::Ui, palette: &theme::Palette) {
     for (i, colour) in accents.into_iter().enumerate() {
         let centre = egui::pos2(rect.left() + 3.5 * (i + 1) as f32, rect.center().y);
         painter.circle_filled(centre, 1.5, colour);
-    }
-}
-
-/// A plot line in the style the View menu asks for. Samples are one second
-/// apart, plotted against their index from zero.
-fn plot_line(view: &View, name: &str, ys: &[f64], colour: egui::Color32) -> Line<'static> {
-    let mut line = Line::new(name, PlotPoints::from_ys_f64(ys)).color(colour);
-    // The default width keeps egui_plot's own stroke (1.5), so the default
-    // plot looks as before; only a thicker choice sets the width.
-    if view.plot_line_width > View::default().plot_line_width {
-        line = line.width(view.plot_line_width);
-    }
-    if view.plot_fill {
-        line = line.fill(0.0).fill_alpha(PLOT_FILL_ALPHA);
-    }
-    line
-}
-
-/// Compact rate for a plot axis mark: the unit is picked per mark and
-/// trailing zeros are dropped, so the axis reads "1.5 MB/s" not "1572864".
-fn axis_rate(bps: f64) -> String {
-    // Marks below zero come from the plot's margin and get no label, so an
-    // idle process does not show a column of zeros.
-    if bps < 0.0 {
-        return String::new();
-    }
-    if bps == 0.0 {
-        return "0".to_string();
-    }
-    let (value, unit) = if bps >= GB {
-        (bps / GB, "GB/s")
-    } else if bps >= MB {
-        (bps / MB, "MB/s")
-    } else if bps >= KB {
-        (bps / KB, "KB/s")
-    } else {
-        (bps, "B/s")
-    };
-    let text = format!("{value:.1}");
-    let text = text.trim_end_matches('0').trim_end_matches('.');
-    format!("{text} {unit}")
-}
-
-/// Grid steps for a rate axis: 1, 2 and 5 of a binary unit (bytes, KB, MB,
-/// GB, TB) and their tens and hundreds, so the axis reads "512 KB/s, 1 MB/s,
-/// 2 MB/s" rather than the powers of ten egui_plot would pick ("976.6 KB/s"),
-/// and a labelled step always fits the plot height: with powers of ten a
-/// short plot whose range passes 3 MB/s lost every label but zero. Halves of
-/// the step are minor lines, labelled too when there is room.
-fn rate_grid(input: egui_plot::GridInput) -> Vec<egui_plot::GridMark> {
-    let (min, max) = input.bounds;
-    // egui_plot labels a step once it spans about 20 points and its base
-    // step is 8 points, so three base steps leave room for a label.
-    let wanted = input.base_step_size * 3.0;
-    if !(wanted.is_finite() && wanted > 0.0 && max > min) {
-        return Vec::new();
-    }
-    let major = nice_rate_step(wanted);
-    let minor = major / 2.0;
-    let first = (min / minor).floor() as i64;
-    let last = (max / minor).ceil() as i64;
-    if last - first > 10_000 {
-        return Vec::new();
-    }
-    // A label is centred on its mark, so one within half a text height of
-    // the top edge would spill out of the plot over whatever sits above it.
-    // The base step spans 8 points, which gives the distance in points.
-    let points_from_top = |value: f64| (max - value) / input.base_step_size * 8.0;
-    (first..=last)
-        .map(|i| egui_plot::GridMark {
-            value: i as f64 * minor,
-            step_size: if i % 2 == 0 { major } else { minor },
-        })
-        .filter(|mark| points_from_top(mark.value) >= 8.0)
-        .collect()
-}
-
-/// The smallest of 1, 2, 5, 10, 20, 50, 100, 200 or 500 bytes, KB, MB, GB
-/// or TB per second that is at least `wanted` bytes per second.
-fn nice_rate_step(wanted: f64) -> f64 {
-    for unit in [1.0, KB, MB, GB, TB] {
-        for scale in [1.0, 10.0, 100.0] {
-            for m in [1.0, 2.0, 5.0] {
-                let step = m * scale * unit;
-                if step >= wanted {
-                    return step;
-                }
-            }
-        }
-    }
-    wanted
-}
-
-/// Y axis formatter for the rate plots.
-fn rate_axis_label(mark: egui_plot::GridMark, _range: &std::ops::RangeInclusive<f64>) -> String {
-    axis_rate(mark.value)
-}
-
-/// Extra plot navigation on top of egui_plot's own (left drag pans the time
-/// axis, double click resets): a plain mouse wheel zooms the time axis
-/// around the pointer, like Ctrl + wheel does by default, and a middle
-/// button drag pans it too. The wheel is swallowed so nothing else scrolls.
-/// The rate axis keeps fitting the data, so zero stays at the bottom. The
-/// plot's own scroll-to-pan is off (`allow_scroll(false)`).
-fn plot_navigation(pui: &mut egui_plot::PlotUi<'_>) {
-    let response = pui.response().clone();
-    if response.dragged_by(egui::PointerButton::Middle) {
-        // Screen pixels to plot units along x; dragging right moves the
-        // view left, like the built in left button pan.
-        let per_pixel = pui.transform().dvalue_dpos()[0];
-        let dx = -f64::from(response.drag_delta().x) * per_pixel;
-        pui.translate_bounds(egui::vec2(dx as f32, 0.0));
-        pui.set_auto_bounds([false, true]);
-    }
-
-    if !response.contains_pointer() {
-        return;
-    }
-    let ctx = pui.ctx().clone();
-    let scroll = ctx.input(|i| i.smooth_scroll_delta.y);
-    if scroll == 0.0 {
-        return;
-    }
-    // Same curve as egui's own wheel zoom: wheel up zooms in.
-    let factor = (scroll / 200.0).exp();
-    pui.zoom_bounds_around_hovered(egui::vec2(factor, 1.0));
-    // A zoom switches auto bounds off on both axes; put the rate axis back.
-    pui.set_auto_bounds([false, true]);
-    ctx.input_mut(|i| {
-        i.smooth_scroll_delta.y = 0.0;
-    });
-}
-
-/// What a plot looked like last frame, to show a usage hint next to it.
-#[derive(Debug, Clone, Copy, Default)]
-struct PlotHint {
-    /// The pointer was over the plot.
-    hovered: bool,
-    /// The view is zoomed or panned (auto bounds are off on some axis).
-    moved: bool,
-}
-
-impl PlotHint {
-    /// The hint to show: how to use the plot while hovered, and the way back
-    /// for as long as the view is zoomed or panned.
-    fn text(self) -> Option<&'static str> {
-        if self.moved {
-            Some("Double click the plot to reset the view")
-        } else if self.hovered {
-            Some("Scroll to zoom the time axis, drag to pan, double click to reset")
-        } else {
-            None
-        }
-    }
-}
-
-impl From<&egui_plot::PlotResponse<egui::Vec2b>> for PlotHint {
-    /// `inner` is the plot's auto bounds flags.
-    fn from(plot: &egui_plot::PlotResponse<egui::Vec2b>) -> Self {
-        PlotHint {
-            hovered: plot.response.hovered(),
-            moved: !(plot.inner.x && plot.inner.y),
-        }
     }
 }
 
@@ -2553,67 +2149,6 @@ mod tests {
     }
 
     #[test]
-    fn rate_grid_uses_binary_steps_that_fit_the_plot() {
-        // A 62 point plot showing up to 2.1 MB/s: 8 points are 271 KB, so
-        // the labelled step is 1 MB and the halves are minor lines.
-        let marks = rate_grid(egui_plot::GridInput {
-            bounds: (0.0, 2.1 * MB),
-            base_step_size: 2.1 * MB / 62.0 * 8.0,
-        });
-        let major: Vec<f64> = marks
-            .iter()
-            .filter(|m| m.step_size == MB)
-            .map(|m| m.value)
-            .collect();
-        // 2 MB/s is 3 points under the top edge, so it is dropped.
-        assert_eq!(major, vec![0.0, MB]);
-        assert_eq!(axis_rate(major[1]), "1 MB/s");
-        let minor: Vec<String> = marks
-            .iter()
-            .filter(|m| m.step_size == MB / 2.0)
-            .map(|m| axis_rate(m.value))
-            .collect();
-        assert_eq!(minor, vec!["512 KB/s", "1.5 MB/s"]);
-
-        // Steps climb through 1, 2, 5 and their tens within a unit.
-        assert_eq!(nice_rate_step(3.0 * KB), 5.0 * KB);
-        assert_eq!(nice_rate_step(60.0 * KB), 100.0 * KB);
-        assert_eq!(nice_rate_step(600.0 * KB), MB);
-        assert_eq!(nice_rate_step(1.0), 1.0);
-        assert!(
-            rate_grid(egui_plot::GridInput {
-                bounds: (0.0, 0.0),
-                base_step_size: 0.0,
-            })
-            .is_empty()
-        );
-
-        // A mark right at the top edge is dropped so its label cannot spill
-        // out of the plot: 2 MB/s sits 2 points under the top here.
-        let marks = rate_grid(egui_plot::GridInput {
-            bounds: (0.0, 2.05 * MB),
-            base_step_size: 2.05 * MB / 62.0 * 8.0,
-        });
-        let top = marks.iter().map(|m| m.value).fold(0.0, f64::max);
-        assert_eq!(top, 1.5 * MB);
-    }
-
-    #[test]
-    fn negative_axis_marks_get_no_label() {
-        assert_eq!(axis_rate(-512.0), "");
-        assert_eq!(axis_rate(0.0), "0");
-    }
-
-    #[test]
-    fn axis_rates_pick_a_unit_and_trim_zeros() {
-        assert_eq!(axis_rate(0.0), "0");
-        assert_eq!(axis_rate(512.0), "512 B/s");
-        assert_eq!(axis_rate(1536.0), "1.5 KB/s");
-        assert_eq!(axis_rate(2.0 * MB), "2 MB/s");
-        assert_eq!(axis_rate(1.75 * GB), "1.8 GB/s");
-    }
-
-    #[test]
     fn limit_field_keeps_only_a_number() {
         assert_eq!(numeric_input("dsadsa"), "");
         assert_eq!(numeric_input("2"), "2");
@@ -2681,59 +2216,6 @@ mod tests {
         ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), TableColumn::ALL.len());
-    }
-
-    #[test]
-    fn tray_rules_name_running_processes_and_sort_by_label() {
-        let mut snap = Snapshot::default();
-        let steam = "c:\\steam\\steam.exe".to_string();
-        let curl = "c:\\tools\\curl.exe".to_string();
-        snap.processes.insert(
-            steam.clone(),
-            ProcessStats {
-                name: "Steam.exe".to_string(),
-                exe_path: steam.clone(),
-                ..ProcessStats::default()
-            },
-        );
-        snap.rules.insert(
-            steam.clone(),
-            Rule {
-                exe_path: steam.clone(),
-                down_limit: Some(1024 * 1024),
-                disabled: true,
-                ..Rule::default()
-            },
-        );
-        snap.rules.insert(
-            curl.clone(),
-            Rule {
-                exe_path: curl.clone(),
-                blocked: true,
-                ..Rule::default()
-            },
-        );
-        // A rule with nothing to apply is not worth a toggle.
-        snap.rules.insert(
-            r"c:\idle.exe".to_string(),
-            Rule {
-                exe_path: r"c:\idle.exe".to_string(),
-                ..Rule::default()
-            },
-        );
-        let rules = tray_rules(&snap);
-        assert_eq!(rules.len(), 2);
-        assert_eq!(rules[0].label, "curl.exe: BLOCKED");
-        assert!(rules[0].active);
-        // Disabled rules still show what they would do, unchecked.
-        assert_eq!(rules[1].label, "Steam.exe: Dn 1.00 MB/s");
-        assert!(!rules[1].active);
-        assert_eq!(rules[1].key, steam);
-    }
-
-    #[test]
-    fn stock_accents_keep_the_stock_tray_icon() {
-        assert_eq!(tray_icon_rgba(theme::Accents::DEFAULT), icon::rgba());
     }
 
     #[test]

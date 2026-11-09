@@ -15,10 +15,13 @@ mod autostart;
 mod backend;
 mod gui;
 mod icon;
+mod plot;
 mod settings;
 mod single_instance;
 mod theme;
+mod tray;
 mod types;
+mod units;
 mod update_check;
 
 use crossbeam_channel::unbounded;
