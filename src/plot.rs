@@ -13,7 +13,9 @@ const PLOT_FILL_ALPHA: f32 = 0.15;
 /// labels on y, time axis zoom and pan only (the rate axis keeps fitting
 /// the data), a legend, and zero always at the bottom.
 pub fn rate_plot(id: &'static str) -> Plot<'static> {
+    // An explicit id, so `reset_view` can find the plot's memory.
     Plot::new(id)
+        .id(egui::Id::new(id))
         .show_x(false)
         .y_axis_formatter(rate_axis_label)
         .y_grid_spacer(rate_grid)
@@ -24,6 +26,16 @@ pub fn rate_plot(id: &'static str) -> Plot<'static> {
         .legend(Legend::default())
         .include_y(0.0)
         .include_y(1.0)
+}
+
+/// Put the plot built by `rate_plot(id)` back on auto bounds, as a double
+/// click on it would. Used by the plots' context menus.
+pub fn reset_view(ctx: &egui::Context, id: &str) {
+    let id = egui::Id::new(id);
+    if let Some(mut memory) = egui_plot::PlotMemory::load(ctx, id) {
+        memory.auto_bounds = egui::Vec2b::TRUE;
+        memory.store(ctx, id);
+    }
 }
 
 /// A plot line in the style the View menu asks for. Samples are one second
@@ -147,7 +159,9 @@ impl PlotHint {
         if self.moved {
             Some("Double click the plot to reset the view")
         } else if self.hovered {
-            Some("Scroll to zoom the time axis, drag to pan, double click to reset")
+            Some(
+                "Scroll to zoom the time axis, drag to pan, double click to reset, right click for options",
+            )
         } else {
             None
         }

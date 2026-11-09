@@ -242,6 +242,30 @@ impl TableColumn {
     }
 }
 
+/// Plot options shared by the View menu and the plots' right click menus:
+/// filled area, line width and, for the header plot, its history length.
+/// Returns whether anything changed.
+fn plot_options(ui: &mut egui::Ui, view: &mut View, header: bool) -> bool {
+    let mut changed = ui.checkbox(&mut view.plot_fill, "Filled area").changed();
+    ui.menu_button("Line width", |ui| {
+        for (width, label) in LINE_WIDTH_CHOICES {
+            changed |= ui
+                .radio_value(&mut view.plot_line_width, width, label)
+                .changed();
+        }
+    });
+    if header {
+        ui.menu_button("Header plot history", |ui| {
+            for (secs, label) in HISTORY_CHOICES {
+                changed |= ui
+                    .radio_value(&mut view.history_secs, secs, label)
+                    .changed();
+            }
+        });
+    }
+    changed
+}
+
 /// The table columns `view` shows, in display order.
 fn visible_columns(view: &View) -> Vec<TableColumn> {
     TableColumn::ALL
@@ -921,21 +945,7 @@ impl ThrottleApp {
             }
         });
         ui.menu_button("Plot", |ui| {
-            changed |= ui.checkbox(&mut view.plot_fill, "Filled area").changed();
-            ui.menu_button("Line width", |ui| {
-                for (width, label) in LINE_WIDTH_CHOICES {
-                    changed |= ui
-                        .radio_value(&mut view.plot_line_width, width, label)
-                        .changed();
-                }
-            });
-            ui.menu_button("Header plot history", |ui| {
-                for (secs, label) in HISTORY_CHOICES {
-                    changed |= ui
-                        .radio_value(&mut view.history_secs, secs, label)
-                        .changed();
-                }
-            });
+            changed |= plot_options(ui, view, true);
         });
         ui.separator();
         let on_top_changed = ui
@@ -952,6 +962,22 @@ impl ThrottleApp {
         if changed {
             self.save_settings();
         }
+    }
+
+    /// Right click menu of a plot built with `plot::rate_plot(id)`: reset
+    /// the view, then the same plot options as the View menu. The header
+    /// plot also offers its history length; the detail plot's is fixed.
+    fn plot_context_menu(&mut self, response: &egui::Response, id: &'static str, header: bool) {
+        response.context_menu(|ui| {
+            if ui.button("Reset view").clicked() {
+                plot::reset_view(ui.ctx(), id);
+                ui.close();
+            }
+            ui.separator();
+            if plot_options(ui, &mut self.settings.view, header) {
+                self.save_settings();
+            }
+        });
     }
 
     /// The Customise window: appearance options on top of the theme.
@@ -1222,6 +1248,7 @@ impl ThrottleApp {
                     pui.auto_bounds()
                 });
                 self.total_plot_hint = PlotHint::from(&plot);
+                self.plot_context_menu(&plot.response, "total_plot", true);
             });
     }
 
@@ -1307,6 +1334,7 @@ impl ThrottleApp {
                         pui.auto_bounds()
                     });
                 self.detail_plot_hint = PlotHint::from(&plot);
+                self.plot_context_menu(&plot.response, "detail_plot", false);
             });
     }
 
