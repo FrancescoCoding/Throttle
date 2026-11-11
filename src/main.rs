@@ -151,6 +151,7 @@ fn main() -> eframe::Result {
             .with_min_inner_size([720.0, 480.0])
             .with_icon(app_icon)
             .with_title("Throttle"),
+        wgpu_options: wgpu_options(),
         // With the `persistence` feature eframe keeps the window size and
         // position (clamped to the monitors present) in `%APPDATA%\Throttle\data`.
         // The app opts out of saving egui's other state (see
@@ -199,6 +200,22 @@ fn main() -> eframe::Result {
             )
         }
     }
+}
+
+/// Renderer backends for wgpu. egui-wgpu enables every backend by default, so
+/// wgpu creates a Vulkan instance on Windows even when it renders elsewhere.
+/// Some old Intel drivers (Skylake's igvk64.dll) crash inside that call, so
+/// Vulkan is left out: DX12 first, GL as a fallback. `WGPU_BACKEND` still
+/// overrides this.
+fn wgpu_options() -> eframe::egui_wgpu::WgpuConfiguration {
+    use eframe::{egui_wgpu, wgpu};
+
+    let mut options = egui_wgpu::WgpuConfiguration::default();
+    if let egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_setup {
+        setup.instance_descriptor.backends =
+            wgpu::Backends::from_env().unwrap_or(wgpu::Backends::DX12 | wgpu::Backends::GL);
+    }
+    options
 }
 
 fn setup_logging() {
