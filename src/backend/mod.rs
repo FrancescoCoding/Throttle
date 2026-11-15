@@ -16,6 +16,7 @@
 //! flow event. The safe `windivert` wrapper takes `&mut self` for `shutdown`,
 //! which cannot be called on the `!Send` handle from another thread.
 
+mod diagnose;
 pub mod engine;
 pub mod flows;
 pub mod rules;
@@ -73,15 +74,15 @@ impl Backend {
 /// a [`Backend`] exposing the snapshot receiver (backend to GUI).
 ///
 /// Fails early with a clear message if WinDivert cannot be opened (typically:
-/// not running elevated, or `WinDivert.dll`/driver missing).
+/// not running elevated, the driver blocked by security software, or the
+/// driver file missing). See [`diagnose::open_failure`].
 pub fn start(cmd_rx: Receiver<Command>) -> anyhow::Result<Backend> {
     // Open the single shared network-layer handle up front so failures (not
-    // elevated, driver missing) surface as a friendly error. Both the engine
-    // and drainer threads use this one handle (see engine::EngineHandle).
-    let engine_handle = Arc::new(engine::open().context(
-        "failed to open WinDivert. Run Throttle as Administrator and ensure \
-         WinDivert.dll and the driver are present next to the executable",
-    )?);
+    // elevated, driver blocked or missing) surface as a friendly error. Both
+    // the engine and drainer threads use this one handle (see
+    // engine::EngineHandle).
+    let engine_handle =
+        Arc::new(engine::open().map_err(|e| anyhow::anyhow!(diagnose::open_failure(&e)))?);
 
     let rules = rules::load();
     let shared = Arc::new(Shared {
