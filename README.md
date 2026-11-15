@@ -117,9 +117,15 @@ target\release\throttle.exe
 
 Throttle must run as Administrator, because WinDivert can only open its device
 from an elevated process. The embedded manifest requests elevation, so Windows
-shows a UAC prompt on launch. If the backend can't start (not elevated, or the
-WinDivert files are missing), the app opens a small window explaining the error
-instead of exiting silently.
+shows a UAC prompt on launch. If the backend can't start (not elevated, the
+driver blocked, or the WinDivert files missing), the app opens a small window
+explaining the error instead of exiting silently.
+
+On work or managed computers, endpoint security or a driver policy can stop
+the WinDivert driver from loading even when Throttle is running as
+Administrator. Windows reports this as "access denied" too. The error window
+says which case it is; if the driver is blocked, your IT team has to allow
+`WinDivert64.sys`.
 
 ## Antivirus note
 
@@ -129,6 +135,13 @@ flag it heuristically. The files vendored here come from the official signed
 WinDivert 2.2.2 release. If your AV quarantines `WinDivert64.sys` or
 `WinDivert.dll`, verify them against the official distribution at
 <https://reqrypt.org/windivert.html> and allow-list them if you trust the source.
+
+Some products block the driver without quarantining anything. With Bitdefender
+installed, Throttle fails to start with "SYS driver file not found" even though
+the file is there, and adding the folder to Bitdefender's exceptions does not
+help (see [#18](https://github.com/FrancescoCoding/Throttle/issues/18)).
+Throttle cannot work around that: it only runs once the security product allows
+the driver or is removed.
 
 ## VPNs and web-filtering proxies
 

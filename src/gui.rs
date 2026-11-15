@@ -2114,9 +2114,8 @@ impl eframe::App for ErrorApp {
             });
             ui.add_space(12.0);
             ui.label(
-                "The backend failed to initialize. This usually means the app is not \
-                 running as Administrator, or the WinDivert driver files \
-                 (WinDivert.dll / WinDivert64.sys) are missing next to the executable.",
+                "Throttle could not open WinDivert, the network driver it uses to \
+                 measure and limit traffic. The details below say why.",
             );
             ui.add_space(8.0);
             ui.separator();
@@ -2131,9 +2130,14 @@ impl eframe::App for ErrorApp {
             });
             ui.add_space(12.0);
             ui.separator();
-            if ui.button("Close").clicked() {
-                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-            }
+            ui.horizontal(|ui| {
+                if ui.button("Copy details").clicked() {
+                    ui.ctx().copy_text(self.message.clone());
+                }
+                if ui.button("Close").clicked() {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            });
         });
     }
 }
